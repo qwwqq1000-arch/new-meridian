@@ -3,7 +3,7 @@ import { forwardNative } from "../proxy/transparentRelay"
 import type { CredentialStore } from "../proxy/tokenRefresh"
 
 const fakeStore = (token: string | null): CredentialStore => ({
-  read: async () => token ? ({ claudeAiOauth: { accessToken: token, refreshToken: "r", expiresAt: Date.now() + 1e9 } } as any) : null,
+  read: async () => token ? ({ claudeAiOauth: { accessToken: token, refreshToken: "r", expiresAt: Date.now() + 1e9 } }) : null,
   write: async () => true,
 })
 const fixedFingerprint = { "user-agent": "claude-cli/2.1.0", "anthropic-version": "2023-06-01" }

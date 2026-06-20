@@ -1,5 +1,8 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test"
 
+// sdkInvoked is flipped by the SDK mock below to verify the native branch bypasses the SDK.
+let sdkInvoked = false
+
 mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   query: () => {
     sdkInvoked = true
@@ -9,9 +12,6 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   tool: () => ({}),
 }))
 mock.module("../logger", () => ({ claudeLog: () => {}, withClaudeLogContext: (_c: unknown, fn: () => unknown) => fn() }))
-
-// sdkInvoked is flipped by the SDK mock above to verify the native branch bypasses the SDK.
-let sdkInvoked = false
 
 const { createProxyServer, clearSessionCache } = await import("../proxy/server")
 const { __setFingerprintOverride } = await import("../proxy/claudeEnvelope")
