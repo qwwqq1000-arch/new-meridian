@@ -78,6 +78,9 @@ import {
 
 import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession, getSessionByClaudeId } from "./session/cache"
 import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
+import { resolveRelayMode, shouldNativeForward } from "./relayMode"
+import { forwardNative } from "./transparentRelay"
+import { getFingerprint } from "./claudeEnvelope"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -973,6 +976,28 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         const onStderr = (data: string) => {
           stderrLines.push(data.trimEnd())
           claudeLog("subprocess.stderr", { line: data.trimEnd() })
+        }
+
+        // Native passthrough (third mode): forward verbatim to api.anthropic.com,
+        // bypassing the Agent SDK. Gated by per-adapter relayMode + OAuth profile.
+        // `let` because a failed fingerprint capture degrades the mode to passthrough.
+        let relayMode = resolveRelayMode({
+          feature: getFeaturesForAdapter(adapter.name).relayMode,
+          envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
+          headerOverride: c.req.header("x-meridian-mode"),
+        })
+        if (shouldNativeForward(relayMode, profile.type)) {
+          const fingerprint = await getFingerprint()
+          if (fingerprint) {
+            const clientHeaders: Record<string, string> = {}
+            c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
+            claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+            return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env }, fingerprint })
+          }
+          // No real fingerprint available → never forward with a guessed one.
+          // Degrade to the existing SDK passthrough mode.
+          claudeLog("relay.native_fallback_passthrough", { adapter: adapter.name, profile: profile.id })
+          relayMode = "passthrough"
         }
 
         if (!stream) {
