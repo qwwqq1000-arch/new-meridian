@@ -720,7 +720,7 @@ git commit -m "feat: capture real Claude Code fingerprint via loopback recorder"
 
 **Interfaces:**
 - Consumes: `ensureClaudeCodeIdentity`, `buildRelayHeaders` (Task 3); `getFingerprint` (Task 5); `CredentialStore` + `createPlatformCredentialStore` + `refreshOAuthToken` from `tokenRefresh.ts`; `FetchLike = (input: string, init?: RequestInit) => Promise<Response>`.
-- Produces: `forwardNative(input: { body: any; clientHeaders: Record<string, string>; profile: { type: string; env: Record<string, string> }; deps?: { fetchImpl?: FetchLike; store?: CredentialStore; getFingerprintFn?: typeof getFingerprint } }): Promise<Response>` — reads the OAuth token (oauth-token profile → `env.CLAUDE_CODE_OAUTH_TOKEN`; otherwise credential store keyed by `env.CLAUDE_CONFIG_DIR`), refreshes once on upstream 401, rewrites `body.system` via `ensureClaudeCodeIdentity`, POSTs to `https://api.anthropic.com/v1/messages` with assembled headers, and returns the upstream `Response` (streaming body passes through untouched). On no-token → returns a `400` JSON `Response`; non-2xx upstream is returned as-is (no fallback).
+- Produces: `forwardNative(input: { body: any; clientHeaders: Record<string, string>; profile: { type: string; env: Record<string, string> }; fingerprint: Record<string, string>; deps?: { fetchImpl?: FetchLike; store?: CredentialStore } }): Promise<Response>` — reads the OAuth token (oauth-token profile → `env.CLAUDE_CODE_OAUTH_TOKEN`; otherwise credential store keyed by `env.CLAUDE_CONFIG_DIR`), refreshes once on upstream 401, rewrites `body.system` via `ensureClaudeCodeIdentity`, POSTs to `https://api.anthropic.com/v1/messages` with assembled headers, and returns the upstream `Response` (streaming body passes through untouched). On no-token → returns a `400` JSON `Response`; non-2xx upstream is returned as-is (no fallback). **Design-change note:** the `fingerprint` is passed IN by the caller (`server.ts`) — `forwardNative` no longer calls `getFingerprint` itself, and there is no baseline. See the revision in the §5/§6 spec and the Task 7 fallback.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -890,7 +890,8 @@ git commit -m "feat: implement native forward to api.anthropic.com"
 - Test: `src/__tests__/proxy-native-relay.test.ts`
 
 **Interfaces:**
-- Consumes: `resolveRelayMode`, `shouldNativeForward` (Task 2); `forwardNative` (Task 6); `getFeaturesForAdapter` (`sdkFeatures.ts`). `adapter` (`adapter.name`), `profile` (`{ type, env }`), `body`, `c.req.raw.headers`, `c.req.header("x-meridian-mode")` all already in scope in `handleMessages`.
+- Consumes: `resolveRelayMode`, `shouldNativeForward` (Task 2); `forwardNative` (Task 6, now takes a `fingerprint` field); `getFingerprint` (Task 5, returns `Fingerprint | null`); `getFeaturesForAdapter` (`sdkFeatures.ts`). `adapter` (`adapter.name`), `profile` (`{ type, env }`), `body`, `c.req.raw.headers`, `c.req.header("x-meridian-mode")` all already in scope in `handleMessages`.
+- **Fingerprint fallback (design change):** the native branch first calls `getFingerprint()`. If it returns `null` (capture failed — there is no baseline), the branch does NOT forward; it logs `relay.native_fallback_passthrough`, reassigns the effective mode to `"passthrough"`, and falls through to the SDK path. Only when a real fingerprint exists does it call `forwardNative({ ..., fingerprint })`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -912,6 +913,14 @@ mock.module("../proxy/transparentRelay", () => ({
   ensureClaudeCodeIdentity: (s: any) => s,
   buildRelayHeaders: () => ({}),
   CLAUDE_CODE_IDENTITY: "x",
+}))
+// Fingerprint present → native branch proceeds. (A null return would degrade to passthrough.)
+mock.module("../proxy/claudeEnvelope", () => ({
+  getFingerprint: async () => ({ "user-agent": "claude-cli/2.1.0" }),
+  filterFingerprintHeaders: (h: any) => h,
+  getCachedFingerprint: () => null,
+  setCachedFingerprint: () => {},
+  resetEnvelopeCache: () => {},
 }))
 mock.module("../proxy/sdkFeatures", () => ({
   getFeaturesForAdapter: () => ({ relayMode: "native", codeSystemPrompt: false, clientSystemPrompt: true, claudeMd: "off", memory: false, dreaming: false, thinking: "disabled", thinkingPassthrough: false, sharedMemory: false, maxBudgetUsd: 0, fallbackModel: "", sdkDebug: false, additionalDirectories: "" }),
@@ -953,6 +962,7 @@ In `src/proxy/server.ts`, add near the other proxy imports (~line 49-62):
 ```typescript
 import { resolveRelayMode, shouldNativeForward } from "./relayMode"
 import { forwardNative } from "./transparentRelay"
+import { getFingerprint } from "./claudeEnvelope"
 ```
 
 - [ ] **Step 4: Insert the native branch**
@@ -962,18 +972,28 @@ In `handleMessages`, after `const stream = ...` (~line 568) and after `sdkFeatur
 ```typescript
     // Native passthrough (third mode): forward verbatim to api.anthropic.com,
     // bypassing the Agent SDK. Gated by per-adapter relayMode + OAuth profile.
-    const relayMode = resolveRelayMode({
+    // `let` because a failed fingerprint capture degrades the mode to passthrough.
+    let relayMode = resolveRelayMode({
       feature: getFeaturesForAdapter(adapter.name).relayMode,
       envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
       headerOverride: c.req.header("x-meridian-mode"),
     })
     if (shouldNativeForward(relayMode, profile.type)) {
-      const clientHeaders: Record<string, string> = {}
-      c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
-      claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-      return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env } })
+      const fingerprint = await getFingerprint()
+      if (fingerprint) {
+        const clientHeaders: Record<string, string> = {}
+        c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
+        claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+        return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env }, fingerprint })
+      }
+      // No real fingerprint available → never forward with a guessed one.
+      // Degrade to the existing SDK passthrough mode.
+      claudeLog("relay.native_fallback_passthrough", { adapter: adapter.name, profile: profile.id })
+      relayMode = "passthrough"
     }
 ```
+
+> The reassigned `relayMode` is consumed by Task 8's `applyRelayModeToPassthrough(relayMode, pipelinePassthrough)`, so the fallback forces `passthrough = true`. Ensure `relayMode` is declared with `let` and remains in scope at the Task 8 override site (same `handleMessages` body).
 
 - [ ] **Step 5: Run test to verify it passes**
 

@@ -89,15 +89,16 @@ The per-adapter granularity replaces a separate "allow non-CC" flag: selecting `
 **Rules**
 - Capture **only non-auth fingerprint headers.** `Authorization` is never captured — `transparentRelay.ts` injects the per-profile OAuth token. Fingerprint headers are emitted unconditionally, so capture works regardless of local auth state.
 - `x-stainless-retry-count` and `x-stainless-timeout` are **per-request** — recompute them per relay, do not replay statically.
-- **Capture failure** (binary missing, timeout) → fall back to a hardcoded baseline fingerprint + a warning log. Capture failure must **not** disable native mode wholesale. (Distinct from runtime relay failure in §6, which returns an error.)
+- **Capture failure** (binary missing, timeout) → `getFingerprint()` returns `null`. There is **no hardcoded baseline fingerprint** — a fixed/stale fingerprint is precisely the "drift → flagged" liability this feature avoids. When the fingerprint is unavailable, the request **degrades to the existing SDK passthrough mode** (see §6 / §7 of the plan): the native branch logs `relay.native_fallback_passthrough` and falls through to the normal SDK path. (Distinct from runtime relay rejection by Anthropic in §6, which returns an error.)
 
 ---
 
 ## 6. Component: `transparentRelay.ts` (verbatim forward)
 
 **Flow:**
+0. The caller (`server.ts`) obtains the fingerprint first via `getFingerprint()`. If it is `null` (capture failed), the caller does **not** invoke `forwardNative` — it degrades to SDK passthrough. So `forwardNative` always receives a real captured `fingerprint` as an input parameter (it does not fetch it itself, and there is no baseline).
 1. Read the profile's OAuth access token from the credential store (`tokenRefresh.ts`). On upstream 401, refresh once and retry (mirrors `oauthUsage.ts`).
-2. Build outgoing headers = `claudeEnvelope` fingerprint + `Authorization: Bearer <token>`. Strip the client's placeholder `x-api-key`, `host`, and `content-length`.
+2. Build outgoing headers = the passed-in `fingerprint` + `Authorization: Bearer <token>`. Strip the client's placeholder `x-api-key`, `host`, and `content-length`.
 3. **System identity:** ensure `system[]`'s first block is exactly `You are Claude Code, Anthropic's official CLI for Claude.`
    - Genuine CC client already carries it → leave untouched.
    - Non-CC client → insert via **anchor-based** rewrite. Must not corrupt body text that merely contains a keyword (lesson from opencode issue #17828 — never blind string-replace).
