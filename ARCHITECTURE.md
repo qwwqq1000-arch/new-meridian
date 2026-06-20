@@ -41,6 +41,9 @@ src/
 │   ├── adapters/
 │   │   ├── opencode.ts        ← OpenCode adapter (session headers, CWD extraction, tool config)
 │   │   └── forgecode.ts       ← ForgeCode adapter (fingerprint sessions, XML CWD, passthrough)
+│   ├── relayMode.ts           ← Relay mode resolution (auto/internal/passthrough/native) and eligibility
+│   ├── claudeEnvelope.ts      ← Dynamic Claude Code fingerprint capture for native mode
+│   ├── transparentRelay.ts    ← Direct forward to api.anthropic.com with OAuth token refresh
 │   ├── query.ts               ← SDK query options builder (shared between stream/non-stream paths)
 │   ├── errors.ts              ← Error classification (SDK errors → HTTP responses)
 │   ├── models.ts              ← Model mapping, Claude executable resolution
@@ -145,6 +148,18 @@ Agent-specific behavior is isolated behind the `AgentAdapter` interface (`adapte
 | `getAgentIncompatibleTools()` | SDK tools with no agent equivalent |
 | `getMcpServerName()` | MCP server name for tool registration |
 | `getAllowedMcpTools()` | MCP tools allowed through the proxy |
+
+### Native Passthrough Mode (Experimental)
+
+Three new modules support native mode — forwarding requests directly to `api.anthropic.com` using Max OAuth credentials, bypassing the Agent SDK:
+
+- **`relayMode.ts`** — Pure mode resolution: decides whether to relay based on adapter settings, environment (`MERIDIAN_NATIVE_FORWARD=1`), per-request headers (`x-meridian-mode`), and profile type (OAuth only). Validates eligibility.
+- **`claudeEnvelope.ts`** — Dynamic fingerprint capture: extracts and caches a genuine Claude Code fingerprint (version, compilation hash, runtime markers) to spoof in forwarded requests. If capture fails, degrades to SDK passthrough.
+- **`transparentRelay.ts`** — Direct forward: sends the request verbatim to Anthropic's endpoint with Bearer token auth, handles 401 refresh, and streams responses via SSE passthrough.
+
+Four relay modes are supported: `auto` (heuristic), `internal` (force SDK), `passthrough` (force SDK passthrough), `native` (force native if eligible). Mode is resolved per-request and can be overridden per-adapter, environment, or request header.
+
+**NOTE:** This is agent-specific behavior (OAuth passthrough is Max-only). Future work will move native mode configuration into an adapter method to decouple from `sdkFeatures.ts`.
 
 ### Remaining OpenCode-Specific Code (Not Yet in Adapter)
 

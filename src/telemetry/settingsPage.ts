@@ -114,6 +114,7 @@ ${profileBarHtml}
 
 <script>
 const FEATURES = [
+  { key: 'relayMode', label: 'Relay Mode', desc: 'auto: default — internal: MCP tools — passthrough: SDK passthrough — native: direct forward to api.anthropic.com (bypasses SDK; higher risk on non-Claude-Code clients)', type: 'select', options: ['auto', 'internal', 'passthrough', 'native'] },
   { key: 'codeSystemPrompt', label: 'Claude Code Prompt', desc: 'Include the built-in Claude Code system prompt (tool usage rules, safety guidelines, coding best practices)', type: 'toggle' },
   { key: 'clientSystemPrompt', label: 'Client Prompt', desc: 'Include the system prompt sent by the connecting agent (e.g. OpenCode or Crush instructions)', type: 'toggle' },
   { key: 'claudeMd', label: 'CLAUDE.md', desc: 'Load CLAUDE.md instruction files — Off: none, Project: ./CLAUDE.md only, Full: ~/.claude/CLAUDE.md + ./CLAUDE.md', type: 'select', options: ['off', 'project', 'full'] },
@@ -129,6 +130,7 @@ const FEATURES = [
 ];
 
 const ADAPTER_LABELS = {
+  'claude-code': 'Claude Code',
   opencode: 'OpenCode',
   crush: 'Crush',
   forgecode: 'ForgeCode',
@@ -146,6 +148,10 @@ async function loadConfig() {
 }
 
 async function saveFeature(adapter, key, value) {
+  if (key === 'relayMode' && value === 'native' && adapter !== 'claude-code') {
+    const ok = confirm('Native mode forwards requests directly to api.anthropic.com using your OAuth token, bypassing the SDK. On non-Claude-Code clients the tool/prompt shape differs from the real CLI, which carries a HIGHER risk of your account being flagged. Enable anyway?');
+    if (!ok) { render(); return; }
+  }
   const patch = {};
   patch[key] = value;
   await fetch('/settings/api/features/' + adapter, {
