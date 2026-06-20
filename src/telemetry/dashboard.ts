@@ -4,6 +4,7 @@
  */
 
 import { profileBarCss, profileBarHtml, profileBarJs, themeCss } from "./profileBar"
+import { KEY_BOOTSTRAP } from "./keyBootstrap"
 
 export const dashboardHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -80,6 +81,7 @@ export const dashboardHtml = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>${KEY_BOOTSTRAP}</script>
 ` + profileBarHtml + `
 <div style="padding:24px">
 <h1>Meridian</h1>

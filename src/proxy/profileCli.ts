@@ -114,6 +114,79 @@ export function parseAuthorizationCodeInput(input: string): ParsedAuthorizationC
   return code ? { code, state } : null
 }
 
+export interface ManualOAuthExchangeResult {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * Exchange a pasted authorization code (from a manual OAuth session) for
+ * tokens and persist them to the credential store. Programmatic counterpart
+ * to completeManualOAuthLogin's interactive flow — used by the web onboarding
+ * endpoints (POST /auth/exchange).
+ *
+ * `configDir` selects which account's credentials to write (undefined = the
+ * default `~/.claude` store).
+ */
+export async function exchangeManualOAuthCode(
+  session: { codeVerifier: string; state: string },
+  codeInput: string,
+  configDir?: string,
+): Promise<ManualOAuthExchangeResult> {
+  const parsed = parseAuthorizationCodeInput(codeInput)
+  if (!parsed) return { ok: false, error: "No authorization code received." }
+  if (parsed.state && parsed.state !== session.state) {
+    return { ok: false, error: "OAuth state mismatch. Please regenerate the link and retry." }
+  }
+
+  let response: Response
+  try {
+    response = await fetch(OAUTH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        client_id: OAUTH_CLIENT_ID,
+        code: parsed.code,
+        redirect_uri: OAUTH_REDIRECT_URI,
+        code_verifier: session.codeVerifier,
+        state: parsed.state ?? session.state,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch (err) {
+    return { ok: false, error: `Token exchange failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "")
+    return { ok: false, error: `Token exchange failed (${response.status}). ${body.slice(0, 200)}` }
+  }
+
+  let tokenData: OAuthTokenResponse
+  try {
+    tokenData = await response.json() as OAuthTokenResponse
+  } catch {
+    return { ok: false, error: "Token response was invalid JSON." }
+  }
+
+  if (!tokenData.access_token || !tokenData.refresh_token) {
+    return { ok: false, error: "Token response did not include the required tokens." }
+  }
+
+  const expiresAt = tokenData.expires_at ?? Date.now() + (tokenData.expires_in ?? 8 * 60 * 60) * 1000
+  const store = createPlatformCredentialStore(configDir ? { claudeConfigDir: configDir } : undefined)
+  const ok = await store.write({
+    claudeAiOauth: {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresAt,
+      scopes: tokenData.scope?.split(" ").filter(Boolean) ?? OAUTH_SCOPES,
+    },
+  })
+  return ok ? { ok: true } : { ok: false, error: "Failed to write credentials to store." }
+}
+
 function loadProfileConfig(): ProfileConfig[] {
   if (!existsSync(CONFIG_FILE)) return []
   try {

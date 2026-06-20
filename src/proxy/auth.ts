@@ -35,7 +35,8 @@ function safeCompare(a: string, b: string): boolean {
 
 /**
  * Extract the API key from the request.
- * Checks x-api-key header first, then Authorization: Bearer.
+ * Checks x-api-key header first, then Authorization: Bearer, then ?key=
+ * query param (enables browser access to admin pages via a single link).
  */
 function extractKey(c: Context): string | undefined {
   const apiKey = c.req.header("x-api-key")
@@ -43,6 +44,9 @@ function extractKey(c: Context): string | undefined {
 
   const auth = c.req.header("authorization")
   if (auth?.startsWith("Bearer ")) return auth.slice(7)
+
+  const queryKey = c.req.query("key")
+  if (queryKey) return queryKey
 
   return undefined
 }

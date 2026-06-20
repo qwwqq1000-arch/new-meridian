@@ -5,6 +5,8 @@
  */
 
 import { profileBarCss, profileBarHtml, profileBarJs, themeCss } from "./profileBar"
+import { KEY_BOOTSTRAP } from "./keyBootstrap"
+import { WINDOW_LABELS } from "./profileUsage"
 
 export const landingHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -72,6 +74,7 @@ export const landingHtml = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>${KEY_BOOTSTRAP}</script>
 ` + profileBarHtml + `
 <div class="container">
   <div class="header">
@@ -94,14 +97,22 @@ export const landingHtml = `<!DOCTYPE html>
 function ms(v){if(v==null||v===0)return '\u2014';return v<1000?v+'ms':(v/1000).toFixed(1)+'s'}
 function card(l,v,d,c){return '<div class="card"><div class="card-label">'+l+'</div><div class="card-value '+(c||'')+'">'+v+'</div>'+(d?'<div class="card-detail">'+d+'</div>':'')+'</div>'}
 
+var QWIN=${JSON.stringify(WINDOW_LABELS)};
+function qLabel(t){if(QWIN[t])return QWIN[t];return String(t).split('_').map(function(p){return p?p[0].toUpperCase()+p.slice(1):p}).join(' ');}
+function qReset(r){if(r==null||!isFinite(r))return'';var ms=r-Date.now();if(ms<=0)return'resetting';var m=Math.floor(ms/60000),h=Math.floor(m/60),d=Math.floor(h/24);if(d>0)return'resets '+d+'d '+(h%24)+'h';if(h>0)return'resets '+h+'h '+(m%60)+'m';return'resets '+m+'m';}
+
 async function refresh(){
   try{
-    const [health,stats]=await Promise.all([fetch('/health').then(r=>r.json()),fetch('/telemetry/summary?window=86400000').then(r=>r.json())]);
-    render(health,stats);
+    const [health,stats,quota]=await Promise.all([
+      fetch('/health').then(r=>r.json()),
+      fetch('/telemetry/summary?window=86400000').then(r=>r.json()),
+      fetch('/v1/usage/quota/all').then(r=>r.ok?r.json():null).catch(function(){return null;})
+    ]);
+    render(health,stats,quota);
   }catch(e){document.getElementById('content').innerHTML='<div style="color:var(--red);padding:40px;text-align:center">Could not connect</div>'}
 }
 
-function render(h,s){
+function render(h,s,q){
   const st=h.status||'unknown',dot=st==='healthy'?'healthy':st==='degraded'?'degraded':'unhealthy';
   let o='';
   o+='<div class="status-banner"><div class="status-dot '+dot+'"></div><span class="status-text">'+(st==='healthy'?'Operational':st==='degraded'?'Degraded':'Offline')+'</span><span class="status-detail">Port '+location.port+' \u00b7 '+(h.mode||'internal')+' mode</span></div>';
@@ -109,8 +120,28 @@ function render(h,s){
   o+='<div class="grid">'+card('Requests (24h)',s.totalRequests,'','violet')+card('Median Response',ms(s.totalDuration?.p50),'p95: '+ms(s.totalDuration?.p95),'')+card('Median TTFB',ms(s.ttfb?.p50),'p95: '+ms(s.ttfb?.p95),'')+card('Error Rate',er+'%',s.errorCount+' errors',parseFloat(er)>5?'':'green')+'</div>';
   o+='<div class="section"><div class="section-title">Account</div>';
   if(h.auth?.loggedIn){o+='<div class="info-grid"><span class="info-label">Email</span><span class="info-value">'+(h.auth.email||'\u2014')+'</span><span class="info-label">Subscription</span><span class="info-value">'+(h.auth.subscriptionType||'\u2014')+'</span><span class="info-label">Mode</span><span class="info-value">'+(h.mode||'internal')+'</span><span class="info-label">Endpoint</span><span class="info-value">http://'+location.host+'</span></div>'}
-  else{o+='<div class="info-grid"><span class="info-label">Status</span><span class="info-value" style="color:var(--yellow)">'+(h.error||'Not authenticated')+'</span></div>'}
+  else{o+='<div class="info-grid"><span class="info-label">Status</span><span class="info-value" style="color:var(--yellow)">'+(h.error||'Not authenticated')+'</span></div>';
+    o+='<div style="margin-top:16px;padding:16px;border:1px solid #2a2a3a;border-radius:10px">'
+      +'<div style="font-weight:600;margin-bottom:10px">上号 / Onboard a Claude account</div>'
+      +'<button onclick="mrdLoginUrl()" style="background:#8B7CF6;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px">① 生成授权链接</button>'
+      +'<div id="mrd-onb" style="margin-top:12px"></div>'
+      +'</div>';}
   o+='</div>';
+  var qp=(q&&q.profiles&&q.profiles.length)?q.profiles[0]:null;
+  var qwin=qp&&qp.windows?qp.windows:[];
+  if(qwin.length){
+    o+='<div class="section"><div class="section-title">Rate Limits 限额</div>';
+    qwin.forEach(function(w){
+      var u=(w.utilization!=null&&isFinite(w.utilization))?Math.max(0,Math.min(1,w.utilization)):null;
+      var pct=u==null?'—':Math.round(u*100)+'%';
+      var col=u==null?'var(--muted)':(u>=0.85?'var(--red)':(u>=0.6?'var(--yellow)':'var(--green)'));
+      var rs=qReset(w.resetsAt);
+      o+='<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px"><span>'+qLabel(w.type)+(rs?' <span style="color:var(--muted)">· '+rs+'</span>':'')+'</span><span style="font-weight:600;color:'+col+'">'+pct+'</span></div><div style="height:6px;background:#22223a;border-radius:4px;overflow:hidden"><div style="height:100%;width:'+(u==null?0:Math.round(u*100))+'%;background:'+col+';transition:width .4s ease"></div></div></div>';
+    });
+    o+='</div>';
+  }else if(h.auth&&h.auth.loggedIn){
+    o+='<div class="section"><div class="section-title">Rate Limits 限额</div><div style="color:var(--muted);font-size:12px">'+(qp&&qp.error?('— ('+qp.error+')'):'— no data yet')+'</div></div>';
+  }
   if(s.byModel&&Object.keys(s.byModel).length>0){o+='<div class="section"><div class="section-title">Models (24h)</div><div class="grid">';for(const[n,d]of Object.entries(s.byModel))o+=card(n,d.count,'avg '+ms(d.avgTotalMs),'');o+='</div></div>'}
   o+='<div class="section"><div class="section-title">Connect an Agent</div><div class="snippet"><div class="snippet-tabs"><div class="snippet-tab active" onclick="showTab(this,&apos;opencode&apos;)">OpenCode</div><div class="snippet-tab" onclick="showTab(this,&apos;crush&apos;)">Crush</div><div class="snippet-tab" onclick="showTab(this,&apos;generic&apos;)">Any Tool</div></div><div id="tab-opencode"><code>ANTHROPIC_API_KEY=x ANTHROPIC_BASE_URL=http://'+location.host+' opencode</code></div><div id="tab-crush" style="display:none"><code>'+JSON.stringify({providers:{meridian:{type:"anthropic",base_url:"http://"+location.host,api_key:"x",models:[{id:"claude-sonnet-4-5-20250514",name:"Sonnet 4.5"}]}}},null,2)+'</code></div><div id="tab-generic" style="display:none"><code>export ANTHROPIC_API_KEY=x\\nexport ANTHROPIC_BASE_URL=http://'+location.host+'</code></div></div></div>';
   o+='<div class="links"><a href="/telemetry" class="link">\ud83d\udcca Telemetry</a><a href="/settings" class="link">\ud83d\udd27 Settings</a><a href="/profiles" class="link">\ud83d\udc64 Profiles</a><a href="/health" class="link">\ud83e\ude7a Health</a><a href="/telemetry/summary" class="link">\ud83d\udcc8 Stats API</a><a href="https://github.com/rynfar/meridian" class="link">\u2699\ufe0f GitHub</a></div>';
@@ -118,7 +149,34 @@ function render(h,s){
   document.getElementById('content').innerHTML=o;
 }
 function showTab(el,id){document.querySelectorAll('.snippet-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');document.querySelectorAll('[id^="tab-"]').forEach(t=>t.style.display='none');document.getElementById('tab-'+id).style.display='block'}
-refresh();setInterval(refresh,10000);
+var mrdSession=null;
+async function mrdLoginUrl(){
+  try{clearInterval(mrdTimer);}catch(e){}
+  var box=document.getElementById('mrd-onb'); if(box)box.textContent='Generating…';
+  try{
+    var r=await fetch('/auth/login-url',{method:'POST'});
+    if(!r.ok){if(box)box.innerHTML='<span style="color:var(--red)">'+(r.status===401?'需要在网址带 ?key=<API_KEY>':('Error '+r.status))+'</span>';return;}
+    var d=await r.json();
+    mrdSession={codeVerifier:d.codeVerifier,state:d.state};
+    if(box)box.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">用要上的账号登录 claude.com,打开此链接授权,把返回的授权码粘到下面:</div>'
+      +'<a href="'+d.authorizeUrl+'" target="_blank" rel="noopener" style="color:#8B7CF6;word-break:break-all;font-size:12px">'+d.authorizeUrl+'</a>'
+      +'<textarea id="mrd-code" placeholder="粘贴授权码 code#state" style="width:100%;margin-top:10px;min-height:54px;background:#0c0c14;color:#eee;border:1px solid #2a2a3a;border-radius:8px;padding:8px;font-size:12px"></textarea>'
+      +'<button onclick="mrdExchange()" style="margin-top:8px;background:#22c55e;color:#06210f;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px">② 提交授权码</button>'
+      +'<div id="mrd-msg" style="margin-top:8px;font-size:12px"></div>';
+  }catch(e){if(box)box.innerHTML='<span style="color:var(--red)">'+e+'</span>';}
+}
+async function mrdExchange(){
+  var msg=document.getElementById('mrd-msg'),ta=document.getElementById('mrd-code');
+  if(!mrdSession||!ta||!ta.value.trim()){if(msg)msg.innerHTML='<span style="color:var(--yellow)">请先生成链接并粘贴授权码</span>';return;}
+  if(msg)msg.textContent='Exchanging…';
+  try{
+    var r=await fetch('/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codeVerifier:mrdSession.codeVerifier,state:mrdSession.state,code:ta.value.trim()})});
+    var d=await r.json().catch(function(){return{};});
+    if(r.ok&&d.success){if(msg)msg.innerHTML='<span style="color:#22c55e">✓ 上号成功,刷新中…</span>';setTimeout(function(){location.reload();},1200);}
+    else{if(msg)msg.innerHTML='<span style="color:var(--red)">'+(d.message||('Error '+r.status))+'</span>';}
+  }catch(e){if(msg)msg.innerHTML='<span style="color:var(--red)">'+e+'</span>';}
+}
+refresh();var mrdTimer=setInterval(refresh,10000);
 ` + profileBarJs + `
 </script>
 </body>

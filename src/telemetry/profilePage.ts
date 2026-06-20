@@ -5,6 +5,7 @@
 
 import { profileBarCss, profileBarHtml, profileBarJs, themeCss } from "./profileBar"
 import { WINDOW_LABELS } from "./profileUsage"
+import { KEY_BOOTSTRAP } from "./keyBootstrap"
 
 export const profilePageHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -135,6 +136,7 @@ export const profilePageHtml = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>${KEY_BOOTSTRAP}</script>
 ` + profileBarHtml + `
 <div class="container">
 <h1>Profiles</h1>

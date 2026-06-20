@@ -51,6 +51,7 @@ import type { AnthropicSseEvent } from "./openai"
 import { translateOpenAiToAnthropic, translateAnthropicToOpenAi, buildModelList, createSseTranslator } from "./openai"
 import { extractAdvisorModel, getLastUserMessage, stripAdvisorTools } from "./messages"
 import { requireAuth, authEnabled } from "./auth"
+import { createManualOAuthSession, exchangeManualOAuthCode } from "./profileCli"
 import { detectAdapter } from "./adapters/detect"
 import { buildQueryOptions, type QueryContext } from "./query"
 import { normalizeEffort } from "./effort"
@@ -2655,6 +2656,47 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       { success: false, message: "Token refresh failed. If the problem persists, run 'claude login'." },
       500
     )
+  })
+
+  // Web-based credential onboarding (manual OAuth / "claude login" in the
+  // browser). Step 1: mint a PKCE session and return the authorize URL plus
+  // the verifier/state for the client to hand back. Both routes sit behind
+  // requireAuth (app.use("/auth/*")), so a valid key is required.
+  app.post("/auth/login-url", (c) => {
+    const session = createManualOAuthSession()
+    return c.json({
+      authorizeUrl: session.authorizeUrl,
+      codeVerifier: session.codeVerifier,
+      state: session.state,
+    })
+  })
+
+  // Step 2: exchange the pasted authorization code for tokens and persist
+  // them to the active profile's credential store (default account = ~/.claude).
+  app.post("/auth/exchange", async (c) => {
+    let body: { codeVerifier?: string; state?: string; code?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ success: false, message: "Invalid JSON body" }, 400)
+    }
+    const { codeVerifier, state, code } = body ?? {}
+    if (!codeVerifier || !state || !code) {
+      return c.json({ success: false, message: "Missing codeVerifier, state, or code" }, 400)
+    }
+    const profile = resolveProfile(
+      finalConfig.profiles,
+      finalConfig.defaultProfile,
+      c.req.header("x-meridian-profile") || undefined
+    )
+    const configDir = profile.env.CLAUDE_CONFIG_DIR
+    const result = await exchangeManualOAuthCode({ codeVerifier, state }, code, configDir)
+    if (result.ok) {
+      // Drop any stale rate-limit snapshot from a prior credential.
+      rateLimitStore.clear()
+      return c.json({ success: true, message: "Credentials saved. You are now logged in.", profile: profile.id })
+    }
+    return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
   })
 
   // --- OpenAI Chat Completions Compatibility ---

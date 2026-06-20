@@ -4,6 +4,7 @@
  */
 
 import { profileBarCss, profileBarHtml, profileBarJs, themeCss } from "./profileBar"
+import { KEY_BOOTSTRAP } from "./keyBootstrap"
 
 export const settingsPageHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -93,6 +94,7 @@ export const settingsPageHtml = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>${KEY_BOOTSTRAP}</script>
 ${profileBarHtml}
 <div class="content">
   <h1>SDK Features <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(210,153,34,0.15);color:var(--yellow);vertical-align:middle;margin-left:8px">Experimental</span></h1>
