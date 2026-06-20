@@ -78,7 +78,7 @@ import {
 
 import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession, getSessionByClaudeId } from "./session/cache"
 import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
-import { resolveRelayMode, shouldNativeForward } from "./relayMode"
+import { resolveRelayMode, shouldNativeForward, applyRelayModeToPassthrough } from "./relayMode"
 import { forwardNative } from "./transparentRelay"
 import { getFingerprint } from "./claudeEnvelope"
 // Re-export for backwards compatibility (existing tests import from here)
@@ -837,15 +837,41 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         return textPrompt!
       }
 
+      // Native passthrough (third mode): forward verbatim to api.anthropic.com,
+      // bypassing the Agent SDK. Gated by per-adapter relayMode + OAuth profile.
+      // `let` because a failed fingerprint capture degrades the mode to passthrough.
+      // IMPORTANT: must run BEFORE the passthrough computation so that a native
+      // fallback (relayMode = "passthrough") can influence the passthrough flag.
+      let relayMode = resolveRelayMode({
+        feature: getFeaturesForAdapter(adapter.name).relayMode,
+        envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
+        headerOverride: c.req.header("x-meridian-mode"),
+      })
+      if (shouldNativeForward(relayMode, profile.type)) {
+        const fingerprint = await getFingerprint()
+        if (fingerprint) {
+          const clientHeaders: Record<string, string> = {}
+          c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
+          claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env }, fingerprint })
+        }
+        // No real fingerprint available → never forward with a guessed one.
+        // Degrade to the existing SDK passthrough mode.
+        claudeLog("relay.native_fallback_passthrough", { adapter: adapter.name, profile: profile.id })
+        relayMode = "passthrough"
+      }
+
       // --- Passthrough mode ---
       // When enabled, ALL tool execution is forwarded to OpenCode instead of
       // being handled internally. This enables multi-model agent delegation
       // (e.g., oracle on GPT-5.2, explore on Gemini via oh-my-opencode).
       // Adapter can override the global passthrough env var per-agent.
       // Droid always uses internal mode; OpenCode defers to the env var.
-      const passthrough = pipelineCtx.passthrough !== undefined
+      // relayMode overrides: internal → false, passthrough → true, auto/native → pipeline value.
+      const pipelinePassthrough = pipelineCtx.passthrough !== undefined
         ? pipelineCtx.passthrough
         : envBool("PASSTHROUGH")
+      const passthrough = applyRelayModeToPassthrough(relayMode, pipelinePassthrough)
       // SDK setting sources — controls CLAUDE.md and user settings loading.
       const settingSources: import("@anthropic-ai/claude-agent-sdk").SettingSource[] =
         envBool("LOAD_CONTEXT") || sdkFeatures.claudeMd === "full"
@@ -976,28 +1002,6 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         const onStderr = (data: string) => {
           stderrLines.push(data.trimEnd())
           claudeLog("subprocess.stderr", { line: data.trimEnd() })
-        }
-
-        // Native passthrough (third mode): forward verbatim to api.anthropic.com,
-        // bypassing the Agent SDK. Gated by per-adapter relayMode + OAuth profile.
-        // `let` because a failed fingerprint capture degrades the mode to passthrough.
-        let relayMode = resolveRelayMode({
-          feature: getFeaturesForAdapter(adapter.name).relayMode,
-          envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
-          headerOverride: c.req.header("x-meridian-mode"),
-        })
-        if (shouldNativeForward(relayMode, profile.type)) {
-          const fingerprint = await getFingerprint()
-          if (fingerprint) {
-            const clientHeaders: Record<string, string> = {}
-            c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
-            claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-            return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env }, fingerprint })
-          }
-          // No real fingerprint available → never forward with a guessed one.
-          // Degrade to the existing SDK passthrough mode.
-          claudeLog("relay.native_fallback_passthrough", { adapter: adapter.name, profile: profile.id })
-          relayMode = "passthrough"
         }
 
         if (!stream) {

@@ -29,3 +29,9 @@ export function shouldNativeForward(
   if (mode !== "native") return false
   return profileType === "claude-max" || profileType === "oauth-token"
 }
+
+export function applyRelayModeToPassthrough(mode: RelayMode, pipelinePassthrough: boolean): boolean {
+  if (mode === "internal") return false
+  if (mode === "passthrough") return true
+  return pipelinePassthrough
+}
