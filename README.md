@@ -222,6 +222,26 @@ For large tool sets (>15 tools), non-core tools are automatically deferred via t
 - **Blocked tools** — 13 built-in SDK tools (Read, Write, Bash, etc.) are blocked to prevent conflicts with the client's own tools. 15 additional Claude Code-only tools (CronCreate, EnterWorktree, Agent, etc.) are blocked because they require capabilities that external clients don't support.
 - **Subagent extraction** — Meridian parses the client's Task tool description to extract subagent names and build SDK AgentDefinitions. If the client's agent framework uses a non-standard format, subagent routing may not work automatically.
 
+### Native passthrough (experimental, off by default)
+
+`relayMode: native` (set per adapter on the SDK Features page) forwards requests
+verbatim to `api.anthropic.com` using your Max OAuth token, bypassing the Agent
+SDK. This removes MCP tool re-wrapping and injected prompts, saving tokens.
+
+**Risk:** This works *around* the SDK rather than through it. Since January 2026
+Anthropic restricts Max OAuth tokens used outside Claude.ai / Claude Code. Meridian
+spoofs a genuine Claude Code fingerprint to reduce static detection, but behavioral
+signals (request volume, non-CLI tool/prompt shapes, account/IP sharing) can still
+flag an account. A perfect fingerprint is not a guarantee of safety. Use it only:
+- on a single account you control, one user, one IP — never shared or rotated;
+- ideally with the Claude Code client (its tool/prompt shape already matches the CLI);
+- within normal single-user volume (Meridian backs off near rate-limit windows).
+
+Enable per adapter in **Settings → SDK Features → Relay Mode**, or set
+`MERIDIAN_NATIVE_FORWARD=1`. Per-request override: header `x-meridian-mode: native | sdk`.
+
+If fingerprint capture fails, the request degrades to SDK passthrough (no guessed fallback).
+
 ## Multi-Profile Support
 
 Meridian can route requests to different Claude accounts. Each **profile** is a named auth context — a separate Claude login with its own OAuth tokens. Switch between personal and work accounts, or share a single Meridian instance across teams.
