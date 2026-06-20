@@ -47,32 +47,32 @@ Consequently the feature is **off by default**, **opt-in**, scoped to genuine Cl
 
 ---
 
-## 4. Mode Selection (settings-driven)
+## 4. Mode Selection (per-adapter SDK feature)
 
-Two new keys in `~/.config/meridian/settings.json` (via `settings.ts`, which merges and never clobbers unknown keys):
+Mode lives in the **existing per-adapter feature store** (`sdkFeatures.ts` → `~/.config/meridian/sdk-features.json`), surfaced by the existing SDK Features page. One new `AdapterFeatures` field:
 
 ```jsonc
-{
-  "relayMode": "auto",        // "auto" | "internal" | "passthrough" | "native"
-  "nativeAllowNonCc": false   // only consulted when relayMode === "native"
-}
+// per adapter, e.g. config["claude-code"]
+{ "relayMode": "auto" }   // "auto" | "internal" | "passthrough" | "native"
 ```
 
-- **`"auto"` is the default** and preserves today's behavior exactly: the adapter decides `internal` vs `passthrough` via `usesPassthrough()`. Existing users see no change.
-- `"internal"` / `"passthrough"` let a user pin one of the existing two modes explicitly.
-- `"native"` selects the third mode.
-- `nativeAllowNonCc` defaults to `false` → native applies **only to the `claude-code` adapter**. Setting it `true` extends native to any adapter holding an OAuth token; the UI/CLI must show a "higher risk" confirmation when toggling it on.
+- **`"auto"` is the default for every adapter** and preserves today's behavior exactly: the transform pipeline decides `internal` vs `passthrough`. Existing users see no change.
+- `"internal"` / `"passthrough"` pin one of the existing two modes explicitly (override the pipeline-computed `passthrough` boolean).
+- `"native"` selects the third mode for that adapter.
+
+The per-adapter granularity replaces a separate "allow non-CC" flag: selecting `native` on the `claude-code` adapter card is the low-risk case; selecting it on a non-CC adapter card (OpenCode, Crush, …) is the explicit higher-risk opt-in, and the Settings UI shows a "higher risk" warning at that point.
 
 **Activation surfaces**
-- `settingsPage.ts`: a mode dropdown + a risk-gated "allow non-CC" toggle.
-- Settings API route (`POST /settings`) reads/writes the keys.
-- `MERIDIAN_NATIVE_FORWARD=1`: env synonym for `relayMode: "native"` (escape hatch / headless).
+- SDK Features page (`settingsPage.ts`): a `relayMode` dropdown per adapter; selecting `native` on a non-`claude-code` card triggers a "higher risk" confirmation.
+- Existing routes `GET/PATCH/DELETE /settings/api/features[/:adapter]` persist it (no new routes — `validateFeatureUpdate` allowlist gains the `relayMode` enum).
+- `MERIDIAN_NATIVE_FORWARD=1`: env synonym that forces `relayMode: "native"` (escape hatch / headless).
 - `x-meridian-mode: native | sdk` request header: per-request override.
 
-**Eligibility gate** — `shouldNativeForward(adapter, profile, ctx)` returns true only when:
-1. resolved mode is `native`, AND
-2. profile is `claude-max` or `oauth-token` (must have a real OAuth token; `api` profiles never qualify), AND
-3. adapter is `claude-code` OR `nativeAllowNonCc === true`.
+**Eligibility gate** — `shouldNativeForward(mode, profile)` returns true only when:
+1. effective relay mode is `native`, AND
+2. profile type is `claude-max` or `oauth-token` (must have a real OAuth token; `api` profiles never qualify).
+
+(There is no `claude-code`-only hard gate in code — the adapter scope is expressed by *which adapter card* has `relayMode: native` set. Non-CC selection is allowed but UI-warned, per the user's intent.)
 
 ---
 
@@ -126,14 +126,15 @@ Dependencies flow downward, per `CLAUDE.md` / `ARCHITECTURE.md`:
 
 ```
 server.ts
+  ├─ relayMode.ts               (new, pure) — resolveRelayMode + shouldNativeForward
   └─ transparentRelay.ts        (new)
        ├─ claudeEnvelope.ts      (new) ─→ models.ts
        ├─ tokenRefresh.ts
-       └─ messages.ts            (anchor-based identity rewrite helper, pure)
-settings.ts (+ settingsPage.ts)  → relayMode / nativeAllowNonCc
+       └─ (ensureClaudeCodeIdentity — pure, exported from transparentRelay.ts)
+sdkFeatures.ts (+ settingsPage.ts) → relayMode per-adapter field
 ```
 
-- `claudeEnvelope.ts` and `transparentRelay.ts` are leaf modules: no imports from `server.ts` or `session/`.
+- `relayMode.ts`, `claudeEnvelope.ts`, and `transparentRelay.ts` are leaf modules: no imports from `server.ts` or `session/`.
 - Integration point in `server.ts` `handleMessages`: after adapter detection + profile resolution, before `buildQueryOptions`:
   ```ts
   if (shouldNativeForward(adapter, profile, ctx)) return forwardNative(...)
