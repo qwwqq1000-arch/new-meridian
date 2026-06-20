@@ -64,7 +64,10 @@ async function defaultSpawnCapture(): Promise<Record<string, string> | null> {
     const finish = (headers: Record<string, string> | null) => {
       if (settled) return
       settled = true
-      try { server.close() } catch { /* already closing */ }
+      try {
+        server.closeAllConnections?.()
+        server.close()
+      } catch { /* already closing */ }
       resolve(headers)
     }
     const server = createServer((req, res) => {
