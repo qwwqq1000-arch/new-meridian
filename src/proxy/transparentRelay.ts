@@ -7,7 +7,7 @@
  */
 
 import { createPlatformCredentialStore, refreshOAuthToken, type CredentialStore } from "./tokenRefresh"
-import { getFingerprint } from "./claudeEnvelope"
+import type { Fingerprint } from "./claudeEnvelope"
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -20,11 +20,11 @@ async function readToken(store: CredentialStore): Promise<string | null> {
 export async function forwardNative(input: {
   body: { system?: unknown; [k: string]: unknown }
   clientHeaders: Record<string, string>
+  fingerprint: Fingerprint
   profile: { type: string; env: Record<string, string> }
-  deps?: { fetchImpl?: FetchLike; store?: CredentialStore; getFingerprintFn?: typeof getFingerprint }
+  deps?: { fetchImpl?: FetchLike; store?: CredentialStore }
 }): Promise<Response> {
   const fetchImpl = input.deps?.fetchImpl ?? (globalThis.fetch as FetchLike)
-  const getFp = input.deps?.getFingerprintFn ?? getFingerprint
 
   // Resolve token: oauth-token profile carries it in env; otherwise read the store.
   let token: string | null = null
@@ -39,7 +39,7 @@ export async function forwardNative(input: {
     return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "No OAuth token available for native relay" } }), { status: 400, headers: { "content-type": "application/json" } })
   }
 
-  const fingerprint = await getFp()
+  const fingerprint = input.fingerprint
   const outBody = { ...input.body, system: ensureClaudeCodeIdentity(input.body.system) }
   const send = (tok: string) => fetchImpl(ANTHROPIC_MESSAGES_URL, {
     method: "POST",

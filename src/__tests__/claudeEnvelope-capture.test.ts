@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test"
-import { getFingerprint, resetEnvelopeCache, BASELINE_FINGERPRINT } from "../proxy/claudeEnvelope"
+import { getFingerprint, resetEnvelopeCache } from "../proxy/claudeEnvelope"
 
 describe("getFingerprint", () => {
   beforeEach(() => resetEnvelopeCache())
@@ -18,19 +18,19 @@ describe("getFingerprint", () => {
     expect(calls).toBe(1) // cached, not re-captured
   })
 
-  it("falls back to baseline when capture returns null and does not cache it", async () => {
+  it("returns null when capture returns null and does not cache it (re-attempts)", async () => {
     let calls = 0
     const spawnCapture = async () => { calls++; return null }
     const fp = await getFingerprint({ spawnCapture, versionKey: "vX" })
-    expect(fp).toEqual(BASELINE_FINGERPRINT)
+    expect(fp).toBeNull()
     await getFingerprint({ spawnCapture, versionKey: "vX" })
     expect(calls).toBe(2) // not cached → re-attempted
   })
 
-  it("falls back to baseline when capture throws", async () => {
+  it("returns null when capture throws", async () => {
     const spawnCapture = async () => { throw new Error("spawn failed") }
     const fp = await getFingerprint({ spawnCapture, versionKey: "vErr" })
-    expect(fp).toEqual(BASELINE_FINGERPRINT)
+    expect(fp).toBeNull()
   })
 
   it("dedupes concurrent captures for the same version key", async () => {

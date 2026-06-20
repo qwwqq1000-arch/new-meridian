@@ -16,14 +16,6 @@ import { resolveClaudeExecutableAsync, getResolvedClaudeExecutableInfo } from ".
 
 export type Fingerprint = Record<string, string>
 
-/** Conservative fallback used when live capture fails. */
-export const BASELINE_FINGERPRINT: Fingerprint = {
-  "user-agent": "claude-cli/2.1.0 (external, cli)",
-  "anthropic-version": "2023-06-01",
-  "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
-  "x-app": "cli",
-}
-
 const KEEP_PREFIXES = ["x-stainless-"]
 const KEEP_EXACT = new Set(["user-agent", "anthropic-version", "anthropic-beta", "x-app"])
 const DROP_PER_REQUEST = new Set(["x-stainless-retry-count", "x-stainless-timeout"])
@@ -41,7 +33,7 @@ export function filterFingerprintHeaders(raw: Record<string, string>): Fingerpri
 }
 
 const cache = new Map<string, Fingerprint>()
-const inflight = new Map<string, Promise<Fingerprint>>()
+const inflight = new Map<string, Promise<Fingerprint | null>>()
 
 export function getCachedFingerprint(versionKey: string): Fingerprint | null {
   return cache.get(versionKey) ?? null
@@ -102,7 +94,7 @@ function currentVersionKey(): string {
 export async function getFingerprint(deps?: {
   spawnCapture?: () => Promise<Record<string, string> | null>
   versionKey?: string
-}): Promise<Fingerprint> {
+}): Promise<Fingerprint | null> {
   const versionKey = deps?.versionKey ?? currentVersionKey()
   const cached = getCachedFingerprint(versionKey)
   if (cached) return cached
@@ -110,17 +102,17 @@ export async function getFingerprint(deps?: {
   if (existing) return existing
 
   const spawnCapture = deps?.spawnCapture ?? defaultSpawnCapture
-  const promise = (async (): Promise<Fingerprint> => {
+  const promise = (async (): Promise<Fingerprint | null> => {
     try {
       const raw = await spawnCapture()
-      if (!raw) return BASELINE_FINGERPRINT
+      if (!raw) return null
       const fp = filterFingerprintHeaders(raw)
-      if (Object.keys(fp).length === 0) return BASELINE_FINGERPRINT
+      if (Object.keys(fp).length === 0) return null
       setCachedFingerprint(versionKey, fp)
       return fp
     } catch (err) {
       claudeLog("envelope.capture_failed", { error: err instanceof Error ? err.message : String(err) })
-      return BASELINE_FINGERPRINT
+      return null
     } finally {
       inflight.delete(versionKey)
     }

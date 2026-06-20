@@ -6,7 +6,7 @@ const fakeStore = (token: string | null): CredentialStore => ({
   read: async () => token ? ({ claudeAiOauth: { accessToken: token, refreshToken: "r", expiresAt: Date.now() + 1e9 } } as any) : null,
   write: async () => true,
 })
-const fixedFingerprint = async () => ({ "user-agent": "claude-cli/2.1.0", "anthropic-version": "2023-06-01" })
+const fixedFingerprint = { "user-agent": "claude-cli/2.1.0", "anthropic-version": "2023-06-01" }
 
 describe("forwardNative", () => {
   it("forwards to api.anthropic.com with Bearer token and identity-prefixed system", async () => {
@@ -20,8 +20,9 @@ describe("forwardNative", () => {
     const res = await forwardNative({
       body: { model: "claude", system: "You are OpenCode.", messages: [{ role: "user", content: "hi" }] },
       clientHeaders: { "x-api-key": "placeholder" },
+      fingerprint: fixedFingerprint,
       profile: { type: "claude-max", env: {} },
-      deps: { fetchImpl, store: fakeStore("tok-abc"), getFingerprintFn: fixedFingerprint as any },
+      deps: { fetchImpl, store: fakeStore("tok-abc") },
     })
     expect(res.status).toBe(200)
     expect(capturedUrl).toBe("https://api.anthropic.com/v1/messages")
@@ -38,8 +39,9 @@ describe("forwardNative", () => {
     const res = await forwardNative({
       body: { messages: [] },
       clientHeaders: {},
+      fingerprint: fixedFingerprint,
       profile: { type: "claude-max", env: {} },
-      deps: { fetchImpl: async () => new Response("{}"), store: fakeStore(null), getFingerprintFn: fixedFingerprint as any },
+      deps: { fetchImpl: async () => new Response("{}"), store: fakeStore(null) },
     })
     expect(res.status).toBe(400)
   })
@@ -53,8 +55,9 @@ describe("forwardNative", () => {
     await forwardNative({
       body: { messages: [], system: "x" },
       clientHeaders: {},
+      fingerprint: fixedFingerprint,
       profile: { type: "oauth-token", env: { CLAUDE_CODE_OAUTH_TOKEN: "env-tok" } },
-      deps: { fetchImpl, getFingerprintFn: fixedFingerprint as any },
+      deps: { fetchImpl },
     })
     expect(auth).toBe("Bearer env-tok")
   })
@@ -64,8 +67,9 @@ describe("forwardNative", () => {
     const res = await forwardNative({
       body: { messages: [], system: "x" },
       clientHeaders: {},
+      fingerprint: fixedFingerprint,
       profile: { type: "claude-max", env: {} },
-      deps: { fetchImpl, store: fakeStore("t"), getFingerprintFn: fixedFingerprint as any },
+      deps: { fetchImpl, store: fakeStore("t") },
     })
     expect(res.status).toBe(403)
   })

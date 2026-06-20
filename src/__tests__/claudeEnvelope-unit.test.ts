@@ -4,7 +4,6 @@ import {
   getCachedFingerprint,
   setCachedFingerprint,
   resetEnvelopeCache,
-  BASELINE_FINGERPRINT,
 } from "../proxy/claudeEnvelope"
 
 describe("filterFingerprintHeaders", () => {
@@ -55,10 +54,3 @@ describe("fingerprint cache", () => {
   })
 })
 
-describe("BASELINE_FINGERPRINT", () => {
-  it("has the mandatory static headers", () => {
-    expect(BASELINE_FINGERPRINT["anthropic-version"]).toBe("2023-06-01")
-    expect(BASELINE_FINGERPRINT["user-agent"]).toMatch(/^claude-cli\//)
-    expect(BASELINE_FINGERPRINT["x-app"]).toBe("cli")
-  })
-})
