@@ -34,6 +34,8 @@ export interface AdapterFeatures {
   sdkDebug: boolean
   /** Comma-separated extra directories Claude can access (beyond CWD) */
   additionalDirectories: string
+  /** Relay mode: auto (pipeline decides), internal (MCP tools), passthrough (SDK passthrough), native (direct forward to api.anthropic.com) */
+  relayMode: "auto" | "internal" | "passthrough" | "native"
 }
 
 export type FeatureConfig = Record<string, Partial<AdapterFeatures>>
@@ -55,6 +57,7 @@ const DEFAULT_FEATURES: AdapterFeatures = {
   fallbackModel: "",
   sdkDebug: false,
   additionalDirectories: "",
+  relayMode: "auto",
 }
 
 /**
@@ -151,6 +154,7 @@ export function getAllFeatureConfigs(): Record<string, AdapterFeatures> {
 
 const VALID_CLAUDE_MD_VALUES = new Set(["off", "project", "full"])
 const VALID_THINKING_VALUES = new Set(["adaptive", "enabled", "disabled"])
+const VALID_RELAY_MODE_VALUES = new Set(["auto", "internal", "passthrough", "native"])
 
 /**
  * Validate and sanitise a partial feature update.
@@ -174,6 +178,11 @@ export function validateFeatureUpdate(raw: unknown): Partial<AdapterFeatures> {
     } else if (key === "thinking") {
       if (typeof value !== "string" || !VALID_THINKING_VALUES.has(value)) {
         throw new Error(`thinking must be one of: ${[...VALID_THINKING_VALUES].join(", ")}`)
+      }
+      result[key] = value
+    } else if (key === "relayMode") {
+      if (typeof value !== "string" || !VALID_RELAY_MODE_VALUES.has(value)) {
+        throw new Error(`relayMode must be one of: ${[...VALID_RELAY_MODE_VALUES].join(", ")}`)
       }
       result[key] = value
     } else if (expected === "boolean") {
