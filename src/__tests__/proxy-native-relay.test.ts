@@ -38,7 +38,7 @@ describe("native relay branch", () => {
       defaultProfile: "p",
     } as Parameters<typeof createProxyServer>[0])
 
-    const res = await app.request("/v1/messages", {
+    const res = await app.fetch(new Request("http://localhost/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -46,7 +46,7 @@ describe("native relay branch", () => {
         "x-meridian-mode": "native",
       },
       body: JSON.stringify({ model: "claude-3", system: "s", messages: [{ role: "user", content: "hi" }], stream: false }),
-    })
+    }))
 
     expect(res.status).toBe(400)
     const body = await res.json() as { error?: { type?: string } }

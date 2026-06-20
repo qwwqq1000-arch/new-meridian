@@ -49,7 +49,7 @@ describe("forwardNative", () => {
   it("uses the oauth-token profile env token directly", async () => {
     let auth = ""
     const fetchImpl = async (_url: string, init?: RequestInit) => {
-      auth = (init?.headers as Record<string, string>)["authorization"]
+      auth = (init?.headers as Record<string, string>)["authorization"] ?? ""
       return new Response("{}", { status: 200 })
     }
     await forwardNative({

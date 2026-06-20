@@ -11,8 +11,9 @@ describe("getFingerprint", () => {
       return { "user-agent": "claude-cli/9.9.9", "anthropic-beta": "real-beta", authorization: "Bearer x" }
     }
     const fp1 = await getFingerprint({ spawnCapture, versionKey: "v9.9.9" })
-    expect(fp1["user-agent"]).toBe("claude-cli/9.9.9")
-    expect(fp1["authorization"]).toBeUndefined() // filtered out
+    expect(fp1).not.toBeNull()
+    expect(fp1!["user-agent"]).toBe("claude-cli/9.9.9")
+    expect(fp1!["authorization"]).toBeUndefined() // filtered out
     const fp2 = await getFingerprint({ spawnCapture, versionKey: "v9.9.9" })
     expect(fp2).toEqual(fp1)
     expect(calls).toBe(1) // cached, not re-captured

@@ -9,7 +9,7 @@ describe("ensureClaudeCodeIdentity", () => {
   })
 
   it("leaves a system whose first block is already the identity untouched", () => {
-    const input = [{ type: "text", text: CLAUDE_CODE_IDENTITY }, { type: "text", text: "rest" }]
+    const input = [{ type: "text" as const, text: CLAUDE_CODE_IDENTITY }, { type: "text" as const, text: "rest" }]
     const out = ensureClaudeCodeIdentity(input)
     expect(out).toEqual(input)
   })
