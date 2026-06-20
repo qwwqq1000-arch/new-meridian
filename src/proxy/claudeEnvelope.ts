@@ -35,6 +35,24 @@ export function filterFingerprintHeaders(raw: Record<string, string>): Fingerpri
 const cache = new Map<string, Fingerprint>()
 const inflight = new Map<string, Promise<Fingerprint | null>>()
 
+/**
+ * Test-only override. When set, server.ts callers (which don't pass
+ * `deps?.spawnCapture`) get this fake instead of running the real subprocess
+ * capture. Callers that pass `deps?.spawnCapture` (envelope unit tests) bypass
+ * the override entirely, so unit tests of this module aren't affected.
+ *
+ * Use this instead of `mock.module()` — Bun's module mocks are process-global
+ * and would leak across parallel test files.
+ */
+let _fingerprintOverride: (() => Promise<Fingerprint | null>) | null = null
+
+/** Test-only setter. Pass `null` to clear. */
+export function __setFingerprintOverride(
+  fn: (() => Promise<Fingerprint | null>) | null,
+): void {
+  _fingerprintOverride = fn
+}
+
 export function getCachedFingerprint(versionKey: string): Fingerprint | null {
   return cache.get(versionKey) ?? null
 }
@@ -95,6 +113,11 @@ export async function getFingerprint(deps?: {
   spawnCapture?: () => Promise<Record<string, string> | null>
   versionKey?: string
 }): Promise<Fingerprint | null> {
+  // Test-only shortcut: bypass cache/subprocess when override is set and the
+  // caller is not a unit test that injects its own spawnCapture.
+  if (_fingerprintOverride && !deps?.spawnCapture) {
+    return _fingerprintOverride()
+  }
   const versionKey = deps?.versionKey ?? currentVersionKey()
   const cached = getCachedFingerprint(versionKey)
   if (cached) return cached
