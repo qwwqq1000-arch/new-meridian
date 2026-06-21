@@ -878,7 +878,12 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               anthropicBeta: c.req.header("anthropic-beta"),
             })
             if (r.degraded) {
-              nativeCb.recordFailure(Date.now())
+              // Only a genuine sidecar-unreachable failure trips the breaker.
+              // Relay/upstream degrades (e.g. opus extra-usage 400, no_token) mean
+              // the sidecar is healthy and responded — counting them would let one
+              // model's quota error open the breaker and block healthy native
+              // traffic (sonnet/haiku) for the whole cooldown.
+              if (r.connectionFailed) nativeCb.recordFailure(Date.now())
               claudeLog("relay.native_degrade", { reason: r.reason ?? "unknown", adapter: adapter.name, profile: profile.id })
               diagnosticLog.session(`${requestMeta.requestId} relay=degrade:${r.reason ?? "unknown"}`, requestMeta.requestId)
               telemetryStore.record({
