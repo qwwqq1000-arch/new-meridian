@@ -1,10 +1,10 @@
 # ---- Go build stage ----
-FROM golang:1.25-alpine AS go-build
+FROM golang:1.26-alpine AS go-build
 WORKDIR /src/native-egress
 COPY native-egress/go.mod native-egress/go.sum ./
 RUN go mod download
 COPY native-egress/ ./
-RUN go mod tidy && CGO_ENABLED=0 go build -o /out/native-egress .
+RUN CGO_ENABLED=0 go build -o /out/native-egress .
 
 # ---- Build stage ----
 FROM oven/bun:1 AS build
