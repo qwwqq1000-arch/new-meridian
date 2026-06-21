@@ -3,6 +3,7 @@ module github.com/rynfar/meridian/native-egress
 go 1.26.4
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/refraction-networking/utls v1.8.2
 	golang.org/x/net v0.56.0
 )
