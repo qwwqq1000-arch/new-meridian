@@ -75,6 +75,13 @@ describe("classifyError", () => {
       const result = classifyError("too many requests")
       expect(result.status).toBe(429)
     })
+
+    it("classifies the Anthropic 'Extra Usage' plan-exhausted 400 as an actionable usage limit", () => {
+      const result = classifyError(`Claude Code returned an error result: API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going."}}`)
+      expect(result.status).toBe(429)
+      expect(result.type).toBe("rate_limit_error")
+      expect(result.message).toContain("claude.ai/settings/usage")
+    })
   })
 
   describe("billing errors", () => {

@@ -33,6 +33,18 @@ export function classifyError(errMsg: string): ClassifiedError {
     }
   }
 
+  // Plan usage exhausted — Anthropic now routes third-party/OAuth app usage to
+  // "Extra Usage" once plan limits are hit ("Third-party apps now draw from your
+  // extra usage… Add more at claude.ai/settings/usage"). Retrying the same call
+  // won't help; the account needs Extra Usage enabled or a window reset.
+  if (lower.includes("extra usage") || lower.includes("claude.ai/settings/usage")) {
+    return {
+      status: 429,
+      type: "rate_limit_error",
+      message: "Claude usage limit reached — third-party apps draw from Extra Usage once your plan limit is hit. Enable/top up Extra Usage at https://claude.ai/settings/usage, or wait for your plan window to reset."
+    }
+  }
+
   // Rate limiting
   if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
     const hint = lower.includes("1m") || lower.includes("context")

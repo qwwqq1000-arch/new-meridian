@@ -188,9 +188,10 @@ describe("Extra usage required fallback", () => {
         messages: [{ role: "user", content: "hello" }],
       })
 
-      // After stripping [1m] (if applicable) and retrying, the error
-      // should eventually propagate since the base model also fails
-      expect(response.status).toBe(500)
+      // After stripping [1m] (if applicable) and retrying, the error should
+      // eventually propagate since the base model also fails. Extra-usage
+      // exhaustion now classifies as an actionable 429 (usage limit), not 500.
+      expect(response.status).toBe(429)
     })
 
     it("falls back on the short 'out of extra usage' error", async () => {
