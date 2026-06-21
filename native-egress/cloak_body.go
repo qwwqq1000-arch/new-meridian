@@ -1,0 +1,74 @@
+package main
+
+import "encoding/json"
+
+const ClaudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
+
+func CloakBody(raw []byte, userID string) ([]byte, error) {
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, err
+	}
+	body["system"] = normalizeSystem(body["system"])
+	sanitizeCacheTTL(body)
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	if _, ok := meta["user_id"].(string); !ok || meta["user_id"] == "" {
+		meta["user_id"] = userID
+	}
+	body["metadata"] = meta
+	return json.Marshal(body)
+}
+
+func normalizeSystem(sys any) []any {
+	identity := map[string]any{"type": "text", "text": ClaudeCodeIdentity}
+	switch v := sys.(type) {
+	case nil:
+		return []any{identity}
+	case string:
+		return []any{identity, map[string]any{"type": "text", "text": v}}
+	case []any:
+		if len(v) > 0 {
+			if b, ok := v[0].(map[string]any); ok && b["text"] == ClaudeCodeIdentity {
+				return v
+			}
+		}
+		return append([]any{identity}, v...)
+	default:
+		return []any{identity}
+	}
+}
+
+func sanitizeCacheTTL(body map[string]any) {
+	var walk func(any)
+	fix := func(b map[string]any) {
+		if cc, ok := b["cache_control"].(map[string]any); ok {
+			if ttl, has := cc["ttl"]; has && ttl != "5m" && ttl != "1h" {
+				cc["ttl"] = "5m"
+			}
+		}
+	}
+	walk = func(node any) {
+		arr, ok := node.([]any)
+		if !ok {
+			return
+		}
+		for _, item := range arr {
+			if b, ok := item.(map[string]any); ok {
+				fix(b)
+				walk(b["content"])
+			}
+		}
+	}
+	walk(body["system"])
+	walk(body["tools"])
+	if msgs, ok := body["messages"].([]any); ok {
+		for _, m := range msgs {
+			if mm, ok := m.(map[string]any); ok {
+				walk(mm["content"])
+			}
+		}
+	}
+}
