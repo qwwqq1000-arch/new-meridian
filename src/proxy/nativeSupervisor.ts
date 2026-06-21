@@ -164,3 +164,20 @@ export class NativeSupervisor {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Module-level singleton — shared across the server lifetime.
+// `getNativeBaseUrl()` is the stable seam used by server.ts (and mocked in tests).
+// ---------------------------------------------------------------------------
+
+const _supervisor = new NativeSupervisor()
+void _supervisor.start()
+
+/**
+ * Returns the base URL of the running Go sidecar, or null if unavailable.
+ * Exported as a function so tests can mock the entire nativeSupervisor module
+ * and replace this with a stub without needing to control the singleton lifecycle.
+ */
+export function getNativeBaseUrl(): string | null {
+  return _supervisor.baseUrl()
+}

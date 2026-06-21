@@ -79,7 +79,8 @@ import {
 import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession, getSessionByClaudeId } from "./session/cache"
 import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
 import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
-import { forwardNative } from "./transparentRelay"
+import { CircuitBreaker, getNativeBaseUrl } from "./nativeSupervisor"
+import { forwardToNative } from "./nativeClient"
 import { isClaudeCodeShaped } from "./ccShape"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
@@ -96,6 +97,11 @@ export type { LineageResult }
 const exec = promisify(execCallback)
 
 let claudeExecutable = ""
+
+// Module-level circuit breaker for native forwarding.
+// Tracks failures/successes across requests; shared with the supervisor singleton
+// in nativeSupervisor.ts.
+const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
   if (profile.type !== "claude-max") return undefined
@@ -851,12 +857,83 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // (which would risk the account if relayed under a CC fingerprint)
         // falls through to the normal SDK path instead.
         if (!sdkFeatures.nativeBodyCheck || isClaudeCodeShaped(body)) {
-          const clientHeaders: Record<string, string> = {}
-          c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
-          claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env } })
+          const nativeBaseUrl = getNativeBaseUrl()
+          if (nativeBaseUrl === null || nativeCb.isOpen(Date.now())) {
+            // Sidecar unavailable or circuit open — degrade to SDK path
+            claudeLog("relay.native_degrade", { reason: "sidecar_unavailable", adapter: adapter.name, profile: profile.id })
+          } else {
+            const configDir = profile.env.CLAUDE_CONFIG_DIR ?? ""
+            const r = await forwardToNative({
+              baseUrl: nativeBaseUrl,
+              body,
+              profile: { configDir, account: profile.id },
+              stream,
+            })
+            if (r.degraded) {
+              nativeCb.recordFailure(Date.now())
+              claudeLog("relay.native_degrade", { reason: r.reason ?? "unknown", adapter: adapter.name, profile: profile.id })
+              telemetryStore.record({
+                requestId: requestMeta.requestId,
+                timestamp: Date.now(),
+                adapter: adapter.name,
+                requestSource,
+                model,
+                requestModel: body.model || undefined,
+                mode: stream ? "stream" : "non-stream",
+                isResume: false,
+                isPassthrough: false,
+                hasDeferredTools: false,
+                toolCount,
+                lineageType,
+                messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+                status: 0,
+                queueWaitMs: requestMeta.queueStartedAt - requestMeta.queueEnteredAt,
+                proxyOverheadMs: 0,
+                ttfbMs: null,
+                upstreamDurationMs: 0,
+                totalDurationMs: Date.now() - requestStartAt,
+                contentBlocks: 0,
+                textEvents: 0,
+                error: `native_degrade:${r.reason ?? "unknown"}`,
+                inputTokens: undefined,
+                outputTokens: undefined,
+              })
+              // fall through to SDK path
+            } else {
+              nativeCb.recordSuccess()
+              claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+              telemetryStore.record({
+                requestId: requestMeta.requestId,
+                timestamp: Date.now(),
+                adapter: adapter.name,
+                requestSource,
+                model,
+                requestModel: body.model || undefined,
+                mode: stream ? "stream" : "non-stream",
+                isResume: false,
+                isPassthrough: false,
+                hasDeferredTools: false,
+                toolCount,
+                lineageType,
+                messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+                status: 200,
+                queueWaitMs: requestMeta.queueStartedAt - requestMeta.queueEnteredAt,
+                proxyOverheadMs: 0,
+                ttfbMs: null,
+                upstreamDurationMs: 0,
+                totalDurationMs: Date.now() - requestStartAt,
+                contentBlocks: 0,
+                textEvents: 0,
+                error: null,
+                inputTokens: undefined,
+                outputTokens: undefined,
+              })
+              return r.response!
+            }
+          }
+        } else {
+          claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
         }
-        claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
       }
 
       // --- Passthrough mode ---
