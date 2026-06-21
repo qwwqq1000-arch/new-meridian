@@ -90,6 +90,22 @@ func TestCloakBodyInjectsDefault5mWhenNoCacheControl(t *testing.T) {
 	}
 }
 
+func TestCloakBodyDropsThinkingWhenToolChoiceForced(t *testing.T) {
+	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled"},"tool_choice":{"type":"tool","name":"x"},"tools":[{"name":"x"}],"messages":[]}`)
+	out, _ := CloakBody(raw, "u")
+	if gjson.GetBytes(out, "thinking").Exists() {
+		t.Fatalf("thinking config must be dropped when tool_choice forces a tool: %s", out)
+	}
+}
+
+func TestCloakBodyKeepsThinkingWhenToolChoiceAuto(t *testing.T) {
+	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled"},"tool_choice":{"type":"auto"},"messages":[]}`)
+	out, _ := CloakBody(raw, "u")
+	if !gjson.GetBytes(out, "thinking").Exists() {
+		t.Fatalf("thinking must be kept when tool_choice is auto: %s", out)
+	}
+}
+
 func TestCloakBodyStringSystem(t *testing.T) {
 	out, _ := CloakBody([]byte(`{"system":"you are X","messages":[]}`), "u")
 	var m map[string]any

@@ -30,11 +30,14 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	// already CC-shaped. The transforms below exist only to fake a non-CC body
 	// as CC on the body-check-off path.
 	if hasClaudeIdentity(body["system"]) {
-		// Genuine CC: forward verbatim, but if the client sent NO cache_control at
-		// all, add a default 5m breakpoint (surgically, via sjson, so thinking
-		// signatures stay intact). A client that DOES send cache_control keeps it
-		// exactly — so an explicit ttl:1h is honored as-is.
-		return ensureCacheControl5m(raw), nil
+		// Genuine CC: forward verbatim, with two surgical (sjson) exceptions that
+		// keep Anthropic from 400ing — neither touches thinking-block signatures:
+		//   1. tool_choice forcing a tool is incompatible with thinking config.
+		//   2. add a default 5m cache breakpoint only when none was sent (a
+		//      client-supplied ttl:1h is preserved as-is).
+		out := disableThinkingIfToolChoiceForced(raw)
+		out = ensureCacheControl5m(out)
+		return out, nil
 	}
 	body["system"] = normalizeSystem(body["system"])
 	sanitizeCacheTTL(body)
@@ -47,6 +50,27 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	}
 	body["metadata"] = meta
 	return json.Marshal(body)
+}
+
+// disableThinkingIfToolChoiceForced removes the request's top-level thinking
+// CONFIG (and output_config.effort) when tool_choice forces tool use
+// ("any"/"tool"). Anthropic rejects thinking combined with a forced tool_choice
+// (400). This touches only the request's thinking configuration — NOT historical
+// thinking blocks in messages — and edits surgically via sjson, so block
+// signatures are never altered. Mirrors CPA's transform of the same name.
+func disableThinkingIfToolChoiceForced(raw []byte) []byte {
+	tc := gjson.GetBytes(raw, "tool_choice.type").String()
+	if tc != "any" && tc != "tool" {
+		return raw
+	}
+	out := raw
+	if gjson.GetBytes(out, "thinking").Exists() {
+		out, _ = sjson.DeleteBytes(out, "thinking")
+	}
+	if gjson.GetBytes(out, "output_config.effort").Exists() {
+		out, _ = sjson.DeleteBytes(out, "output_config.effort")
+	}
+	return out
 }
 
 // ensureCacheControl5m adds a default 5m cache breakpoint when the client sent
