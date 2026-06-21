@@ -225,9 +225,14 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
   const store = opts?.store ?? createPlatformCredentialStore({ claudeConfigDir: opts?.claudeConfigDir })
 
   const promise = (async () => {
+    // Serve the last-known-good snapshot (even if expired) when a fresh fetch
+    // can't complete — a missing token can be a transient refresh race (the
+    // credentials file is mid-rewrite), and upstream/network blips shouldn't blank
+    // the panel. Only when there's no cache at all do we surface null ("no_token").
+    const stale = () => cacheByProfile.get(cacheKey) ?? null
     try {
       const token = await readAccessToken(store)
-      if (!token) return null
+      if (!token) return stale()
 
       let result = await callAnthropic(token, fetchImpl)
       if ("__status" in result && result.__status === 401) {
@@ -235,15 +240,15 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
         const refreshed = await refreshOAuthToken(store)
         if (!refreshed) {
           claudeLog("oauth_usage.refresh_failed", { profile: cacheKey })
-          return null
+          return stale()
         }
         const newToken = await readAccessToken(store)
-        if (!newToken) return null
+        if (!newToken) return stale()
         result = await callAnthropic(newToken, fetchImpl)
       }
       if ("__status" in result) {
         claudeLog("oauth_usage.upstream_error", { profile: cacheKey, status: result.__status })
-        return null
+        return stale()
       }
 
       const snapshot = buildSnapshot(result)
@@ -251,7 +256,7 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
       return snapshot
     } catch (err) {
       claudeLog("oauth_usage.fetch_failed", { profile: cacheKey, error: err instanceof Error ? err.message : String(err) })
-      return null
+      return stale()
     } finally {
       inflightByProfile.delete(cacheKey)
     }
