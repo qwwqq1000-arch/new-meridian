@@ -17,6 +17,18 @@ const SETTINGS_FILE = join(homedir(), ".config", "meridian", "settings.json")
 export interface MeridianSettings {
   /** Last active profile ID — restored on proxy startup */
   activeProfile?: string
+  /**
+   * Global native-forwarding toggle. When true, ALL adapters that route to an
+   * OAuth-capable profile will forward requests verbatim to api.anthropic.com,
+   * bypassing the SDK. Per-adapter sdkFeatures.nativeForward still ORs with
+   * this as an additional enable path. Default: false (off).
+   */
+  nativeForward?: boolean
+  /**
+   * Global anti-forge gate for native forwarding. When false, the body-shape
+   * check is skipped globally. Default: true (gate ON — safe default).
+   */
+  nativeBodyCheck?: boolean
 }
 
 /** Read settings from disk. Returns empty object if file doesn't exist or is invalid. */

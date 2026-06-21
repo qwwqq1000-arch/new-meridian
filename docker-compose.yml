@@ -5,7 +5,8 @@ services:
     user: root
     volumes:
       - claude-auth:/home/claude/.claude
-    entrypoint: ["sh", "-c", "chown -R 1000:1000 /home/claude/.claude"]
+      - meridian-config:/home/claude/.config
+    entrypoint: ["sh", "-c", "chown -R 1000:1000 /home/claude/.claude /home/claude/.config"]
     restart: "no"
 
   proxy:
@@ -19,7 +20,11 @@ services:
       - "3456:3456"
     volumes:
       - claude-auth:/home/claude/.claude
+      # Persist global settings (native toggles, sdk-features) across recreate so
+      # UI/CLI toggle changes survive restarts.
+      - meridian-config:/home/claude/.config
     restart: unless-stopped
 
 volumes:
   claude-auth:
+  meridian-config:

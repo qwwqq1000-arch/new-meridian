@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { rateLimitStore } from "./rateLimitStore"
-import { fetchOAuthUsage } from "./oauthUsage"
+import { fetchOAuthUsage, getLastOAuthUsageError } from "./oauthUsage"
 import { resolveSdkWorkingDirectory } from "./cwd"
 import type { Context } from "hono"
 import { DEFAULT_PROXY_CONFIG } from "./types"
@@ -79,8 +79,9 @@ import {
 import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession, getSessionByClaudeId } from "./session/cache"
 import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
 import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
-import { forwardNative } from "./transparentRelay"
-import { isClaudeCodeShaped } from "./ccShape"
+import { CircuitBreaker, getNativeBaseUrl } from "./nativeSupervisor"
+import { forwardToNative } from "./nativeClient"
+import { inspectClaudeCodeShape } from "./ccShape"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -96,6 +97,10 @@ export type { LineageResult }
 const exec = promisify(execCallback)
 
 let claudeExecutable = ""
+
+// Server-side circuit breaker for native forwarding (tracks forwardToNative response failures).
+// Separate from NativeSupervisor's internal CB, which tracks health-poll failures — by design.
+const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
   if (profile.type !== "claude-max") return undefined
@@ -434,7 +439,11 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // Hoist adapter detection before try so it's available in the catch block for telemetry
       const adapter = detectAdapter(c)
       try {
-        const body = await c.req.json()
+        // Read the raw body TEXT (not c.req.json()) so the native path can
+        // forward the exact original bytes — re-serializing corrupts thinking
+        // block signatures. We parse a local copy for inspection/routing only.
+        const rawBodyText = await c.req.text()
+        const body = JSON.parse(rawBodyText)
 
         // Validate required fields
         if (!Array.isArray(body.messages)) {
@@ -840,8 +849,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // (otherwise any client could spend the operator's OAuth token by
       // spoofing a header). Runs BEFORE the passthrough computation so an
       // anti-forgery reject can fall through to the SDK path below.
+      const { getSetting: getNativeSetting } = require("./settings") as typeof import("./settings")
       if (nativeEligible({
-        featureNativeForward: sdkFeatures.nativeForward,
+        featureNativeForward: getNativeSetting("nativeForward") === true || sdkFeatures.nativeForward,
         envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
         clientForcedSdk: c.req.header("x-meridian-mode") === "sdk",
         profileType: profile.type,
@@ -850,13 +860,92 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // requests whose body genuinely looks like Claude Code. A non-CC body
         // (which would risk the account if relayed under a CC fingerprint)
         // falls through to the normal SDK path instead.
-        if (!sdkFeatures.nativeBodyCheck || isClaudeCodeShaped(body)) {
-          const clientHeaders: Record<string, string> = {}
-          c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
-          claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env } })
+        const globalBodyCheck = getNativeSetting("nativeBodyCheck") !== false
+        const ccShape = inspectClaudeCodeShape(body)
+        if (!globalBodyCheck || ccShape.ok) {
+          const nativeBaseUrl = getNativeBaseUrl()
+          if (nativeBaseUrl === null || nativeCb.isOpen(Date.now())) {
+            // Sidecar unavailable or circuit open — degrade to SDK path
+            claudeLog("relay.native_degrade", { reason: "sidecar_unavailable", adapter: adapter.name, profile: profile.id })
+            diagnosticLog.session(`${requestMeta.requestId} relay=degrade:sidecar_unavailable`, requestMeta.requestId)
+          } else {
+            const configDir = profile.env.CLAUDE_CONFIG_DIR ?? ""
+            const r = await forwardToNative({
+              baseUrl: nativeBaseUrl,
+              rawBody: rawBodyText,
+              profile: { configDir, account: profile.id },
+              stream,
+              anthropicBeta: c.req.header("anthropic-beta"),
+            })
+            if (r.degraded) {
+              nativeCb.recordFailure(Date.now())
+              claudeLog("relay.native_degrade", { reason: r.reason ?? "unknown", adapter: adapter.name, profile: profile.id })
+              diagnosticLog.session(`${requestMeta.requestId} relay=degrade:${r.reason ?? "unknown"}`, requestMeta.requestId)
+              telemetryStore.record({
+                requestId: requestMeta.requestId,
+                timestamp: Date.now(),
+                adapter: adapter.name,
+                requestSource,
+                model,
+                requestModel: body.model || undefined,
+                mode: stream ? "stream" : "non-stream",
+                isResume: false,
+                isPassthrough: false,
+                hasDeferredTools: false,
+                toolCount,
+                lineageType,
+                messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+                status: 0,
+                queueWaitMs: requestMeta.queueStartedAt - requestMeta.queueEnteredAt,
+                proxyOverheadMs: 0,
+                ttfbMs: null,
+                upstreamDurationMs: 0,
+                totalDurationMs: Date.now() - requestStartAt,
+                contentBlocks: 0,
+                textEvents: 0,
+                error: `native_degrade:${r.reason ?? "unknown"}`,
+                inputTokens: undefined,
+                outputTokens: undefined,
+              })
+              // fall through to SDK path
+            } else {
+              nativeCb.recordSuccess()
+              claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+              diagnosticLog.session(`${requestMeta.requestId} relay=native`, requestMeta.requestId)
+              telemetryStore.record({
+                requestId: requestMeta.requestId,
+                timestamp: Date.now(),
+                adapter: adapter.name,
+                requestSource,
+                model,
+                requestModel: body.model || undefined,
+                mode: stream ? "stream" : "non-stream",
+                isResume: false,
+                isPassthrough: false,
+                hasDeferredTools: false,
+                toolCount,
+                lineageType,
+                messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+                status: 200,
+                queueWaitMs: requestMeta.queueStartedAt - requestMeta.queueEnteredAt,
+                proxyOverheadMs: 0,
+                ttfbMs: null,
+                upstreamDurationMs: 0,
+                totalDurationMs: Date.now() - requestStartAt,
+                contentBlocks: 0,
+                textEvents: 0,
+                error: null,
+                inputTokens: undefined,
+                outputTokens: undefined,
+              })
+              return r.response!
+            }
+          }
+        } else {
+          const why = ccShape.identityOk ? `tools ${ccShape.toolHits}/${ccShape.minTools} CC` : "identity"
+          claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id, why, identityOk: ccShape.identityOk, toolHits: ccShape.toolHits, toolCount: ccShape.toolCount, systemPrefix: ccShape.systemPrefix, sampleTools: ccShape.sampleTools })
+          diagnosticLog.session(`${requestMeta.requestId} relay=reject:noncc why=${why} identityOk=${ccShape.identityOk} ccTools=${ccShape.toolHits}/${ccShape.toolCount} sys="${ccShape.systemPrefix}" tools=[${ccShape.sampleTools.join(",")}]`, requestMeta.requestId)
         }
-        claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
       }
 
       // --- Passthrough mode ---
@@ -2497,6 +2586,41 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     return c.json({ ok: true })
   })
 
+  // Global native-forwarding settings
+  app.get("/settings/api/native", (c) => {
+    const { getSetting } = require("./settings") as typeof import("./settings")
+    return c.json({
+      nativeForward: getSetting("nativeForward") === true,
+      nativeBodyCheck: getSetting("nativeBodyCheck") !== false,
+    })
+  })
+  app.patch("/settings/api/native", async (c) => {
+    const { setSetting } = require("./settings") as typeof import("./settings")
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400)
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "body must be a JSON object" }, 400)
+    }
+    const input = body as Record<string, unknown>
+    if ("nativeForward" in input) {
+      if (typeof input.nativeForward !== "boolean") {
+        return c.json({ error: "nativeForward must be a boolean" }, 400)
+      }
+      setSetting("nativeForward", input.nativeForward)
+    }
+    if ("nativeBodyCheck" in input) {
+      if (typeof input.nativeBodyCheck !== "boolean") {
+        return c.json({ error: "nativeBodyCheck must be a boolean" }, 400)
+      }
+      setSetting("nativeBodyCheck", input.nativeBodyCheck)
+    }
+    return c.json({ ok: true })
+  })
+
   // Prometheus metrics endpoint
   app.get("/metrics", (c) => {
     const body = renderPrometheusMetrics(telemetryStore)
@@ -2995,7 +3119,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           windows: oauth?.windows ?? [],
           extraUsage: oauth?.extraUsage ?? null,
           fetchedAt: oauth?.fetchedAt ?? null,
-          error: oauth ? null : "no_token",
+          error: oauth ? null : (getLastOAuthUsageError() ?? "no_token"),
         }],
         activeProfile: "default",
         asOf: Date.now(),
@@ -3027,7 +3151,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         windows: oauth?.windows ?? [],
         extraUsage: oauth?.extraUsage ?? null,
         fetchedAt: oauth?.fetchedAt ?? null,
-        error: oauth ? null : "no_token",
+        error: oauth ? null : (getLastOAuthUsageError(p.id) ?? "no_token"),
       }
     }))
 

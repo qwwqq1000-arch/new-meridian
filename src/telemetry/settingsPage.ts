@@ -114,8 +114,6 @@ ${profileBarHtml}
 
 <script>
 const FEATURES = [
-  { key: 'nativeForward', label: 'Native Forwarding', desc: 'Forward requests routed to this adapter VERBATIM to api.anthropic.com using your OAuth token, bypassing the SDK (no tool re-wrapping, no injected prompts). Intended for the Claude Code adapter — higher risk on non-CC adapters.', type: 'toggle' },
-  { key: 'nativeBodyCheck', label: 'Native: Anti-Forge Body Check', desc: 'Only forward natively when the request body genuinely looks like Claude Code (CC identity + CC tools). Blocks a client that spoofed CC detection headers from spending your OAuth token / risking the account. Keep ON.', type: 'toggle' },
   { key: 'codeSystemPrompt', label: 'Claude Code Prompt', desc: 'Include the built-in Claude Code system prompt (tool usage rules, safety guidelines, coding best practices)', type: 'toggle' },
   { key: 'clientSystemPrompt', label: 'Client Prompt', desc: 'Include the system prompt sent by the connecting agent (e.g. OpenCode or Crush instructions)', type: 'toggle' },
   { key: 'claudeMd', label: 'CLAUDE.md', desc: 'Load CLAUDE.md instruction files — Off: none, Project: ./CLAUDE.md only, Full: ~/.claude/CLAUDE.md + ./CLAUDE.md', type: 'select', options: ['off', 'project', 'full'] },
@@ -141,6 +139,68 @@ const ADAPTER_LABELS = {
 };
 
 let currentConfig = {};
+let globalNative = { nativeForward: false, nativeBodyCheck: true };
+
+async function loadGlobalNative() {
+  const res = await fetch('/settings/api/native');
+  globalNative = await res.json();
+  renderGlobalNativeSection();
+}
+
+async function saveGlobalNative(key, value) {
+  if (key === 'nativeForward' && value === true) {
+    const ok = confirm('Native forwarding sends requests DIRECTLY to api.anthropic.com using your OAuth token, bypassing the SDK. This carries account risk — enabling it means all adapters with OAuth-capable profiles will bypass the SDK. Enable anyway?');
+    if (!ok) { renderGlobalNativeSection(); return; }
+  }
+  const patch = {};
+  patch[key] = value;
+  await fetch('/settings/api/native', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  globalNative[key] = value;
+  showSaved();
+}
+
+function renderGlobalNativeSection() {
+  const existing = document.getElementById('global-native-card');
+  if (existing) existing.remove();
+  const container = document.getElementById('adapters');
+  const card = document.createElement('div');
+  card.id = 'global-native-card';
+  card.className = 'adapter-card';
+  card.style.cssText = 'border-color: var(--accent); margin-bottom: 24px;';
+  card.innerHTML =
+    '<div class="adapter-header">' +
+      '<span class="adapter-name">Native Forwarding ' +
+        '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(210,153,34,0.15);color:var(--yellow);vertical-align:middle;margin-left:8px">Global</span>' +
+      '</span>' +
+    '</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin-bottom:12px">' +
+      'Global override: applies to ALL adapters. When enabled, requests routed to OAuth-capable profiles bypass the Agent SDK and are forwarded verbatim to api.anthropic.com. ' +
+      'Per-adapter nativeForward in the cards below still works as an additional enable.' +
+    '</p>' +
+    '<div class="feature-grid">' +
+      '<div class="feature-row">' +
+        '<div class="feature-info">' +
+          '<span class="feature-label">Native Forwarding</span>' +
+          '<span class="feature-desc">Bypass SDK globally — forward all OAuth-capable requests verbatim to api.anthropic.com</span>' +
+        '</div>' +
+        '<label class="toggle"><input type="checkbox" id="global-nativeForward" ' + (globalNative.nativeForward ? 'checked' : '') +
+        ' onchange="saveGlobalNative(\\'nativeForward\\', this.checked)"><span class="toggle-track"></span></label>' +
+      '</div>' +
+      '<div class="feature-row">' +
+        '<div class="feature-info">' +
+          '<span class="feature-label">Anti-Forge Body Check</span>' +
+          '<span class="feature-desc">Only forward natively when the body looks like genuine Claude Code (CC identity + tools). Keep ON.</span>' +
+        '</div>' +
+        '<label class="toggle"><input type="checkbox" id="global-nativeBodyCheck" ' + (globalNative.nativeBodyCheck ? 'checked' : '') +
+        ' onchange="saveGlobalNative(\\'nativeBodyCheck\\', this.checked)"><span class="toggle-track"></span></label>' +
+      '</div>' +
+    '</div>';
+  container.insertBefore(card, container.firstChild);
+}
 
 async function loadConfig() {
   const res = await fetch('/settings/api/features');
@@ -187,6 +247,7 @@ function hasAnyEnabled(features) {
 function render() {
   const container = document.getElementById('adapters');
   container.innerHTML = '';
+  renderGlobalNativeSection();
 
   for (const [adapter, label] of Object.entries(ADAPTER_LABELS)) {
     const features = currentConfig[adapter] || {};
@@ -249,6 +310,7 @@ function render() {
 }
 
 loadConfig();
+loadGlobalNative();
 ${profileBarJs}
 </script>
 </body>
