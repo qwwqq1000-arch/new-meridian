@@ -27,10 +27,11 @@ describe("forwardToNative", () => {
       sentHeaders = (init?.headers ?? {}) as Record<string, string>
       return new Response("", { status: 200 })
     }
-    await forwardToNative({ baseUrl: "http://127.0.0.1:9", rawBody: raw, profile: { configDir: "/c", account: "acct" }, stream: true, fetchImpl })
+    await forwardToNative({ baseUrl: "http://127.0.0.1:9", rawBody: raw, profile: { configDir: "/c", account: "acct" }, stream: true, anthropicBeta: "structured-outputs-2025-12-15", fetchImpl })
     expect(sentBody).toBe(raw) // verbatim — not re-serialized
     expect(sentHeaders["x-native-account"]).toBe("acct")
     expect(sentHeaders["x-native-config-dir"]).toBe("/c")
     expect(sentHeaders["x-native-stream"]).toBe("1")
+    expect(sentHeaders["x-native-anthropic-beta"]).toBe("structured-outputs-2025-12-15")
   })
 })

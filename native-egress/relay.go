@@ -42,6 +42,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		configDir := r.Header.Get("X-Native-Config-Dir")
 		account := r.Header.Get("X-Native-Account")
 		stream := r.Header.Get("X-Native-Stream") == "1"
+		clientBeta := r.Header.Get("X-Native-Anthropic-Beta")
 
 		token, _, _, err := ReadToken(configDir)
 		if err != nil || token == "" {
@@ -61,7 +62,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
-		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), stream)
+		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), stream, clientBeta)
 
 		upReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {

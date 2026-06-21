@@ -875,6 +875,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               rawBody: rawBodyText,
               profile: { configDir, account: profile.id },
               stream,
+              anthropicBeta: c.req.header("anthropic-beta"),
             })
             if (r.degraded) {
               nativeCb.recordFailure(Date.now())
