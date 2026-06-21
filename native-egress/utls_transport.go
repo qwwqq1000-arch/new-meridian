@@ -47,6 +47,10 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 		return nil, err
 	}
 	t.mu.Lock()
+	if c2, ok := t.conns[host]; ok && c2.CanTakeNewRequest() {
+		t.mu.Unlock()
+		return c2.RoundTrip(req)
+	}
 	t.conns[host] = h2
 	t.mu.Unlock()
 	return h2.RoundTrip(req)
