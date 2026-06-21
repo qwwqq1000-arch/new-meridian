@@ -172,7 +172,7 @@ Native forwarding relays requests directly to `api.anthropic.com` using Max OAut
 #### Go sidecar (`native-egress/`)
 
 - **`relay.go`** — Three-layer disguise:
-  - **Layer 1 — uTLS**: Impersonates Chrome's JA3 TLS signature (optional, behind `MERIDIAN_NATIVE_DEBUG`)
+  - **Layer 1 — uTLS**: Impersonates Chrome's JA3 TLS signature (always active in native mode)
   - **Layer 2 — Headers**: Captures real Claude Code client headers by running `ANTHROPIC_LOG=debug` on the SDK; auto-updates when CC version changes (TTL: `MERIDIAN_NATIVE_FINGERPRINT_TTL`, default 5 minutes)
   - **Layer 3 — Body**: Strips/overrides `identity`, `cache_control`, `user_id` to look like SDK traffic
 - **`fingerprint.go`** — Extract and cache real CC headers from SDK debug output

@@ -230,7 +230,7 @@ When enabled, Claude Code requests are forwarded directly to `api.anthropic.com`
 
 A genuine Claude Code client already sends an authentic request with real `claude-cli/…` headers and `system` with `cache_control`. Meridian spawns a Go binary (`native-egress`) that:
 
-1. **Layer 1 — uTLS TLS fingerprinting** — impersonates Chrome's JA3 TLS signature to evade TLS-based detection (off by default; enable via `MERIDIAN_NATIVE_DEBUG`)
+1. **Layer 1 — uTLS TLS fingerprinting** — impersonates Chrome's JA3 TLS signature to evade TLS-based detection (always active in native mode)
 2. **Layer 2 — Dynamic header capture** — runs `ANTHROPIC_LOG=debug` on the SDK in the background to capture real Claude Code client headers (updated automatically when Claude Code version changes; TTL configurable via `MERIDIAN_NATIVE_FINGERPRINT_TTL`, default 5 minutes)
 3. **Layer 3 — Body cloaking** — strips/overrides `identity`, `cache_control`, and `user_id` to look more like authentic SDK traffic rather than replayed CC requests
 
@@ -240,7 +240,7 @@ The sidecar **mirrors the client's own headers**, swaps in a real `Authorization
 
 - **Prefer-native-with-degrade** — tries native first; any failure (connection, 401, 429, timeout) seamlessly falls back to the SDK without interrupting the request
 - **Circuit breaker** — tracks repeated failures per OAuth profile; after N consecutive failures, native is disabled for 5 minutes, protecting against repeated degradation
-- **Full redacted logging** — all logs filter `Bearer`, `sk-ant-*` tokens, and credential material; debug mode (via `MERIDIAN_NATIVE_DEBUG`) adds relay headers for troubleshooting without exposing credentials
+- **Redacted logging** — the `Authorization` Bearer token is always redacted in logs; debug mode (via `MERIDIAN_NATIVE_DEBUG`) adds relay headers for troubleshooting without exposing credentials
 
 #### Configuration
 
