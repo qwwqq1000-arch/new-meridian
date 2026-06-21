@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // Full identity used when INJECTING (only on the body-check-off path, faking a
@@ -25,7 +30,11 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	// already CC-shaped. The transforms below exist only to fake a non-CC body
 	// as CC on the body-check-off path.
 	if hasClaudeIdentity(body["system"]) {
-		return raw, nil
+		// Genuine CC: forward verbatim, but if the client sent NO cache_control at
+		// all, add a default 5m breakpoint (surgically, via sjson, so thinking
+		// signatures stay intact). A client that DOES send cache_control keeps it
+		// exactly — so an explicit ttl:1h is honored as-is.
+		return ensureCacheControl5m(raw), nil
 	}
 	body["system"] = normalizeSystem(body["system"])
 	sanitizeCacheTTL(body)
@@ -38,6 +47,30 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	}
 	body["metadata"] = meta
 	return json.Marshal(body)
+}
+
+// ensureCacheControl5m adds a default 5m cache breakpoint when the client sent
+// no cache_control anywhere. "ephemeral" with no ttl IS Anthropic's 5m default.
+// If any cache_control is already present the body is returned untouched, so a
+// client-supplied ttl (e.g. "1h") is preserved verbatim. Edit is surgical
+// (sjson) — it never re-serializes the whole body, so thinking signatures hold.
+func ensureCacheControl5m(raw []byte) []byte {
+	if bytes.Contains(raw, []byte(`"cache_control"`)) {
+		return raw
+	}
+	system := gjson.GetBytes(raw, "system")
+	if !system.IsArray() {
+		return raw
+	}
+	n := len(system.Array())
+	if n == 0 {
+		return raw
+	}
+	out, err := sjson.SetRawBytes(raw, fmt.Sprintf("system.%d.cache_control", n-1), []byte(`{"type":"ephemeral"}`))
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // hasClaudeIdentity reports whether the system field already carries the Claude

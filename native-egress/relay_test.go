@@ -101,7 +101,7 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 // signature is computed over the original text (including `<`,`>` chars that a
 // JSON re-marshal would HTML-escape), so any re-serialization breaks it.
 func TestRelayForwardsBodyVerbatim(t *testing.T) {
-	raw := []byte(`{"model":"x","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a<b>c&d","signature":"SIG=="}]}]}`)
+	raw := []byte(`{"model":"x","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a<b>c&d","signature":"SIG=="}]}]}`)
 	var sent []byte
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {

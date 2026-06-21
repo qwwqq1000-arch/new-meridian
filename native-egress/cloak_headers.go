@@ -26,14 +26,22 @@ func unionAnthropicBeta(lists ...string) string {
 	return strings.Join(out, ",")
 }
 
+// featureBetas are request-enabling betas that a simple `claude -p hi` capture
+// doesn't carry and that gateways (e.g. new-api) strip from the client request.
+// They only take effect when the body actually uses the feature, so it's safe to
+// always advertise them — mirrors CPA, which sends a comprehensive beta superset.
+// structured-outputs is required for structured/JSON-schema output requests.
+const featureBetas = "structured-outputs-2025-12-15"
+
 func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stream bool, clientBeta string) http.Header {
 	h := http.Header{}
 	for k, v := range fp {
 		h.Set(k, v)
 	}
-	// Preserve request-specific betas the client sent (the fp loop above set the
-	// capture's baseline beta; union the client's on top).
-	if beta := unionAnthropicBeta(h.Get("anthropic-beta"), clientBeta); beta != "" {
+	// Union: capture baseline + always-on feature betas + the client's request
+	// betas. Overwriting with only the capture would drop request-specific flags
+	// like structured-outputs and Anthropic would 400.
+	if beta := unionAnthropicBeta(h.Get("anthropic-beta"), featureBetas, clientBeta); beta != "" {
 		h.Set("anthropic-beta", beta)
 	}
 	h.Set("authorization", "Bearer "+token)

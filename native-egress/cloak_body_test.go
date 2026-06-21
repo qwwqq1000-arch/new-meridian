@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestCloakBodyInjectsIdentityAndUserID(t *testing.T) {
@@ -57,13 +59,34 @@ func TestCloakBodyIdentityInNonFirstBlockNotDuplicated(t *testing.T) {
 // they were". The raw bytes here use non-alphabetical key order on purpose; a
 // re-marshal would reorder them.
 func TestCloakBodyVerbatimWhenCcShaped(t *testing.T) {
-	raw := []byte(`{"model":"claude-sonnet-4-6","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"SIG_DO_NOT_TOUCH=="}]}]}`)
+	// cache_control present → no default injection → fully verbatim.
+	raw := []byte(`{"model":"claude-sonnet-4-6","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"SIG_DO_NOT_TOUCH=="}]}]}`)
 	out, err := CloakBody(raw, "u")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(out) != string(raw) {
 		t.Fatalf("CC body must be verbatim.\n got: %s\nwant: %s", out, raw)
+	}
+}
+
+func TestCloakBodyPreserves1hCacheTTL(t *testing.T) {
+	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[]}`)
+	out, _ := CloakBody(raw, "u")
+	if string(out) != string(raw) {
+		t.Fatalf("client ttl:1h must be preserved verbatim.\n got: %s", out)
+	}
+}
+
+func TestCloakBodyInjectsDefault5mWhenNoCacheControl(t *testing.T) {
+	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}],"messages":[]}`)
+	out, _ := CloakBody(raw, "u")
+	cc := gjson.GetBytes(out, "system.0.cache_control")
+	if !cc.Exists() {
+		t.Fatalf("expected default cache_control injected, got: %s", out)
+	}
+	if cc.Get("type").String() != "ephemeral" || cc.Get("ttl").Exists() {
+		t.Fatalf("default must be ephemeral with no ttl (=5m), got: %s", cc.Raw)
 	}
 }
 
