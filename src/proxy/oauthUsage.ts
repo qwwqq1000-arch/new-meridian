@@ -80,6 +80,18 @@ const cacheByProfile = new Map<string, OAuthUsageSnapshot>()
 const inflightByProfile = new Map<string, Promise<OAuthUsageSnapshot | null>>()
 const DEFAULT_KEY = "__default__"
 
+/**
+ * Last failure reason per profile, so the UI can label an empty panel honestly
+ * (e.g. `upstream_429` when Anthropic rate-limits the usage endpoint) instead of
+ * the misleading catch-all "no_token". Cleared on a successful fetch.
+ */
+const lastErrorByProfile = new Map<string, string>()
+
+/** Reason the most recent fetch for this profile failed, or undefined if it succeeded. */
+export function getLastOAuthUsageError(profileId?: string | null): string | undefined {
+  return lastErrorByProfile.get(profileId ?? DEFAULT_KEY)
+}
+
 const WINDOW_TYPES: Array<keyof RawOAuthUsageResponse> = [
   "five_hour",
   "seven_day",
@@ -229,10 +241,10 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
     // can't complete — a missing token can be a transient refresh race (the
     // credentials file is mid-rewrite), and upstream/network blips shouldn't blank
     // the panel. Only when there's no cache at all do we surface null ("no_token").
-    const stale = () => cacheByProfile.get(cacheKey) ?? null
+    const fail = (reason: string) => { lastErrorByProfile.set(cacheKey, reason); return cacheByProfile.get(cacheKey) ?? null }
     try {
       const token = await readAccessToken(store)
-      if (!token) return stale()
+      if (!token) return fail("no_token")
 
       let result = await callAnthropic(token, fetchImpl)
       if ("__status" in result && result.__status === 401) {
@@ -240,23 +252,24 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
         const refreshed = await refreshOAuthToken(store)
         if (!refreshed) {
           claudeLog("oauth_usage.refresh_failed", { profile: cacheKey })
-          return stale()
+          return fail("refresh_failed")
         }
         const newToken = await readAccessToken(store)
-        if (!newToken) return stale()
+        if (!newToken) return fail("no_token")
         result = await callAnthropic(newToken, fetchImpl)
       }
       if ("__status" in result) {
         claudeLog("oauth_usage.upstream_error", { profile: cacheKey, status: result.__status })
-        return stale()
+        return fail(`upstream_${result.__status}`)
       }
 
       const snapshot = buildSnapshot(result)
       cacheByProfile.set(cacheKey, snapshot)
+      lastErrorByProfile.delete(cacheKey)
       return snapshot
     } catch (err) {
       claudeLog("oauth_usage.fetch_failed", { profile: cacheKey, error: err instanceof Error ? err.message : String(err) })
-      return stale()
+      return fail("fetch_failed")
     } finally {
       inflightByProfile.delete(cacheKey)
     }
@@ -270,4 +283,5 @@ async function fetchOAuthUsageImpl(opts?: FetchOAuthUsageOpts): Promise<OAuthUsa
 export function resetOAuthUsageCache(): void {
   cacheByProfile.clear()
   inflightByProfile.clear()
+  lastErrorByProfile.clear()
 }

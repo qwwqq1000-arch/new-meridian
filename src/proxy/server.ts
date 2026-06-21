@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { rateLimitStore } from "./rateLimitStore"
-import { fetchOAuthUsage } from "./oauthUsage"
+import { fetchOAuthUsage, getLastOAuthUsageError } from "./oauthUsage"
 import { resolveSdkWorkingDirectory } from "./cwd"
 import type { Context } from "hono"
 import { DEFAULT_PROXY_CONFIG } from "./types"
@@ -3119,7 +3119,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           windows: oauth?.windows ?? [],
           extraUsage: oauth?.extraUsage ?? null,
           fetchedAt: oauth?.fetchedAt ?? null,
-          error: oauth ? null : "no_token",
+          error: oauth ? null : (getLastOAuthUsageError() ?? "no_token"),
         }],
         activeProfile: "default",
         asOf: Date.now(),
@@ -3151,7 +3151,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         windows: oauth?.windows ?? [],
         extraUsage: oauth?.extraUsage ?? null,
         fetchedAt: oauth?.fetchedAt ?? null,
-        error: oauth ? null : "no_token",
+        error: oauth ? null : (getLastOAuthUsageError(p.id) ?? "no_token"),
       }
     }))
 

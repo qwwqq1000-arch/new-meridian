@@ -140,7 +140,9 @@ function render(h,s,q){
     });
     o+='</div>';
   }else if(h.auth&&h.auth.loggedIn){
-    o+='<div class="section"><div class="section-title">Rate Limits 限额</div><div style="color:var(--muted);font-size:12px">'+(qp&&qp.error?('— ('+qp.error+')'):'— no data yet')+'</div></div>';
+    var qe=qp&&qp.error;
+    var qmsg=qe?(/^upstream_429$/.test(qe)?'— rate-limited, retrying…':(/^upstream_/.test(qe)?'— upstream error, retrying…':(qe==='fetch_failed'||qe==='refresh_failed'?'— temporarily unavailable, retrying…':(qe==='no_token'?'— no OAuth token':'— ('+qe+')')))):'— no data yet';
+    o+='<div class="section"><div class="section-title">Rate Limits 限额</div><div style="color:var(--muted);font-size:12px">'+qmsg+'</div></div>';
   }
   if(s.byModel&&Object.keys(s.byModel).length>0){o+='<div class="section"><div class="section-title">Models (24h)</div><div class="grid">';for(const[n,d]of Object.entries(s.byModel))o+=card(n,d.count,'avg '+ms(d.avgTotalMs),'');o+='</div></div>'}
   o+='<div class="section"><div class="section-title">Connect an Agent</div><div class="snippet"><div class="snippet-tabs"><div class="snippet-tab active" onclick="showTab(this,&apos;opencode&apos;)">OpenCode</div><div class="snippet-tab" onclick="showTab(this,&apos;crush&apos;)">Crush</div><div class="snippet-tab" onclick="showTab(this,&apos;generic&apos;)">Any Tool</div></div><div id="tab-opencode"><code>ANTHROPIC_API_KEY=x ANTHROPIC_BASE_URL=http://'+location.host+' opencode</code></div><div id="tab-crush" style="display:none"><code>'+JSON.stringify({providers:{meridian:{type:"anthropic",base_url:"http://"+location.host,api_key:"x",models:[{id:"claude-sonnet-4-5-20250514",name:"Sonnet 4.5"}]}}},null,2)+'</code></div><div id="tab-generic" style="display:none"><code>export ANTHROPIC_API_KEY=x\\nexport ANTHROPIC_BASE_URL=http://'+location.host+'</code></div></div></div>';
