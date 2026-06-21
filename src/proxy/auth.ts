@@ -52,6 +52,18 @@ function extractKey(c: Context): string | undefined {
 }
 
 /**
+ * Inline auth check (no middleware). True when auth is disabled, or the request
+ * carries a valid key. Lets routes hide themselves (e.g. 404 the dashboard)
+ * instead of returning a 401 that reveals the page exists.
+ */
+export function isAuthed(c: Context): boolean {
+  const key = getConfiguredKey()
+  if (!key) return true
+  const provided = extractKey(c)
+  return !!provided && safeCompare(provided, key)
+}
+
+/**
  * Hono middleware that rejects requests without a valid API key.
  * No-op when MERIDIAN_API_KEY is not set.
  */
