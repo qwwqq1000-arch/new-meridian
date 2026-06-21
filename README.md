@@ -224,35 +224,45 @@ For large tool sets (>15 tools), non-core tools are automatically deferred via t
 
 ### Native forwarding (experimental, off by default)
 
-When enabled, a request routed to the adapter is forwarded **verbatim** to
-`api.anthropic.com` using your Max OAuth token, bypassing the Agent SDK. This
-removes MCP tool re-wrapping and injected prompts, saving tokens.
+When enabled, Claude Code requests are forwarded directly to `api.anthropic.com` via a Go egress sidecar (`native-egress/`), bypassing the Agent SDK. This removes MCP tool re-wrapping and injected prompts, saving tokens. The sidecar handles three-layer request disguise and circuit breaker failover.
 
-It works because a genuine Claude Code client already sends an authentic request
-(real `claude-cli/…` user-agent, `anthropic-beta`, `x-stainless-*`, and a `system`
-with `cache_control`); the only thing it lacks is OAuth auth (it reached the proxy
-with a placeholder key). Meridian therefore **mirrors the client's own headers**,
-swaps in a real `Authorization: Bearer`, ensures the OAuth beta flag is present, and
-forwards the body unchanged. Nothing is fabricated — a real Claude Code request is
-relayed through the OAuth channel.
+#### How it works
 
-**Two safety toggles (per adapter, in Settings → SDK Features):**
-- **Native Forwarding** (default OFF) — enable native for this adapter. Native is a
-  server-side decision; a client can never enable it. Intended for the Claude Code
-  adapter. (Operator escape hatch: `MERIDIAN_NATIVE_FORWARD=1`. A client may only opt
-  OUT via header `x-meridian-mode: sdk` — never opt in.)
-- **Anti-Forge Body Check** (default ON) — only forward natively when the request body
-  genuinely looks like Claude Code (CC identity + CC tool quorum). Because adapter
-  detection is header-based and spoofable, this stops a non-CC client that set
-  `user-agent: claude-cli/…` from spending your OAuth token; a non-CC body falls
-  through to the normal SDK path.
+A genuine Claude Code client already sends an authentic request with real `claude-cli/…` headers and `system` with `cache_control`. Meridian spawns a Go binary (`native-egress`) that:
 
-**Risk:** This works *around* the SDK rather than through it. Since January 2026
-Anthropic restricts Max OAuth tokens used outside Claude.ai / Claude Code. Forwarding
-a genuine Claude Code request reduces static detection, but behavioral signals (request
-volume, account/IP sharing) can still flag an account. Use it only on a single account
-you control — one user, one IP, never shared or rotated — and prefer the Claude Code
-client (whose requests are genuinely CC-shaped).
+1. **Layer 1 — uTLS TLS fingerprinting** — impersonates Chrome's JA3 TLS signature to evade TLS-based detection (off by default; enable via `MERIDIAN_NATIVE_DEBUG`)
+2. **Layer 2 — Dynamic header capture** — runs `ANTHROPIC_LOG=debug` on the SDK in the background to capture real Claude Code client headers (updated automatically when Claude Code version changes; TTL configurable via `MERIDIAN_NATIVE_FINGERPRINT_TTL`, default 5 minutes)
+3. **Layer 3 — Body cloaking** — strips/overrides `identity`, `cache_control`, and `user_id` to look more like authentic SDK traffic rather than replayed CC requests
+
+The sidecar **mirrors the client's own headers**, swaps in a real `Authorization: Bearer` (from your Max OAuth token), and forwards the body with cloaking applied. All authentication is redacted in logs (Bearer tokens never leak).
+
+#### Safety & Failover
+
+- **Prefer-native-with-degrade** — tries native first; any failure (connection, 401, 429, timeout) seamlessly falls back to the SDK without interrupting the request
+- **Circuit breaker** — tracks repeated failures per OAuth profile; after N consecutive failures, native is disabled for 5 minutes, protecting against repeated degradation
+- **Full redacted logging** — all logs filter `Bearer`, `sk-ant-*` tokens, and credential material; debug mode (via `MERIDIAN_NATIVE_DEBUG`) adds relay headers for troubleshooting without exposing credentials
+
+#### Configuration
+
+**Enable native forwarding** (per-adapter, Settings → SDK Features):
+- **Native Forwarding** (default OFF) — server-side only; a client may never enable it. Intended for the Claude Code adapter. (Env escape hatch: `MERIDIAN_NATIVE_FORWARD=1`. A client may only opt OUT via header `x-meridian-mode: sdk`.)
+- **Anti-Forge Body Check** (default ON) — only forward when the body genuinely looks like Claude Code (CC identity + CC tool quorum). Stops a spoofed `user-agent: claude-cli/…` from spending your OAuth token.
+
+**Environment variables:**
+- `MERIDIAN_NATIVE_FORWARD=1` — globally enable native forwarding (opt-out per-request via `x-meridian-mode: sdk`)
+- `MERIDIAN_NATIVE_FINGERPRINT_TTL=<seconds>` — how long to cache captured headers (default `300` = 5 minutes; set to `0` to capture on every native request, at the cost of spawning the SDK)
+- `MERIDIAN_NATIVE_DEBUG=1` — enable uTLS Chrome JA3 fingerprint (experimental; all logs still redacted)
+
+#### Risk & Limitations
+
+**This bypasses the SDK.** Since January 2026, Anthropic restricts Max OAuth tokens used outside Claude.ai / Claude Code. Forwarding a genuine CC request reduces static detection, but behavioral signals (request volume, account/IP sharing) can still flag an account.
+
+**Use only with:**
+- A single Claude Max account you control
+- One IP address (no sharing, no rotation)
+- The genuine Claude Code client (whose requests are natively CC-shaped)
+
+If you prefer the SDK's transparency and built-in rate-limiting, leave native disabled — it's off by default.
 
 ## Multi-Profile Support
 

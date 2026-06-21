@@ -43,7 +43,8 @@ src/
 │   │   └── forgecode.ts       ← ForgeCode adapter (fingerprint sessions, XML CWD, passthrough)
 │   ├── relayMode.ts           ← Native eligibility + internal/passthrough override (pure)
 │   ├── ccShape.ts             ← Anti-forgery: is a request body genuinely Claude Code-shaped (pure)
-│   ├── transparentRelay.ts    ← Native forward: mirror client headers + Bearer, body verbatim
+│   ├── nativeSupervisor.ts    ← Go sidecar spawning, health checks, circuit breaker, process lifecycle
+│   ├── nativeClient.ts        ← Loopback HTTP client: forward requests to native-egress, handle degrade
 │   ├── query.ts               ← SDK query options builder (shared between stream/non-stream paths)
 │   ├── errors.ts              ← Error classification (SDK errors → HTTP responses)
 │   ├── models.ts              ← Model mapping, Claude executable resolution
@@ -75,8 +76,16 @@ src/
 │   ├── profileBar.ts          ← Shared profile switcher bar (injected into HTML pages)
 │   ├── profilePage.ts         ← Profile management page HTML
 │   └── types.ts               ← Telemetry types
-└── plugin/
-    └── claude-max-headers.ts  ← OpenCode plugin for session header injection
+├── plugin/
+│   └── claude-max-headers.ts  ← OpenCode plugin for session header injection
+└── native-egress/             ← Go binary: uTLS TLS + dynamic header capture + body cloaking + circuit breaker
+    ├── main.go                ← Sidecar entrypoint, `/relay` handler, process model
+    ├── relay.go               ← Three-layer disguise: TLS (uTLS), headers (captured), body (cloaked)
+    ├── fingerprint.go         ← Extract+cache real CC headers from SDK debug output
+    ├── cloak_*.go             ← Strip identity/cache_control/user_id from request body
+    ├── oauth.go               ← OAuth token management and refresh
+    ├── log.go                 ← Redacted logging (Bearer tokens always hidden)
+    └── *.go                   ← Tests for all above
 ```
 
 ## Dependency Rules
@@ -149,13 +158,27 @@ Agent-specific behavior is isolated behind the `AgentAdapter` interface (`adapte
 | `getMcpServerName()` | MCP server name for tool registration |
 | `getAllowedMcpTools()` | MCP tools allowed through the proxy |
 
-### Native Passthrough Mode (Experimental)
+### Native Egress Mode (Experimental)
 
-Native forwarding relays a request directly to `api.anthropic.com` using Max OAuth credentials, bypassing the Agent SDK. A genuine Claude Code client already sends an authentic request (real `claude-cli/…` headers + `system` with `cache_control`); the only thing it lacks is OAuth auth. So Meridian mirrors the client's own headers, swaps in a Bearer token, and forwards the body verbatim — no fabricated fingerprint, no system rewriting.
+Native forwarding relays requests directly to `api.anthropic.com` using Max OAuth credentials, bypassing the Agent SDK. When enabled, Meridian spawns a Go sidecar (`native-egress`) that implements three-layer request disguise and handles circuit breaker failover to the SDK.
+
+#### Node-side coordination
 
 - **`ccShape.ts`** — Pure anti-forgery detector: `isClaudeCodeShaped(body)` checks the system identity line + a quorum of PascalCase CC tool names. Used because adapter detection is header-spoofable.
 - **`relayMode.ts`** — Pure eligibility: `nativeEligible(...)` (server-side toggle / `MERIDIAN_NATIVE_FORWARD=1` / OAuth profile; a client may only opt OUT via `x-meridian-mode: sdk`, never opt in) and `applyRelayModeToPassthrough` (internal/passthrough override of the SDK path).
-- **`transparentRelay.ts`** — Direct forward: mirrors client headers (strips placeholder auth / hop-by-hop / `x-meridian-*`), injects Bearer + OAuth beta, forwards the body verbatim, handles 401 refresh, returns the upstream response (SSE or JSON) as-is.
+- **`nativeSupervisor.ts`** — Spawns and monitors the Go binary (`native-egress`), tracks process health, implements circuit breaker (disable native for 5 minutes after N consecutive failures), manages lifecycle (spawn on first use, reuse across requests, graceful shutdown).
+- **`nativeClient.ts`** — Loopback HTTP client to forward requests to the sidecar's `/relay` endpoint. Handles degrade: if native fails (connection error, 401, 429, timeout), falls back seamlessly to the SDK without interrupting the request.
+
+#### Go sidecar (`native-egress/`)
+
+- **`relay.go`** — Three-layer disguise:
+  - **Layer 1 — uTLS**: Impersonates Chrome's JA3 TLS signature (optional, behind `MERIDIAN_NATIVE_DEBUG`)
+  - **Layer 2 — Headers**: Captures real Claude Code client headers by running `ANTHROPIC_LOG=debug` on the SDK; auto-updates when CC version changes (TTL: `MERIDIAN_NATIVE_FINGERPRINT_TTL`, default 5 minutes)
+  - **Layer 3 — Body**: Strips/overrides `identity`, `cache_control`, `user_id` to look like SDK traffic
+- **`fingerprint.go`** — Extract and cache real CC headers from SDK debug output
+- **`cloak_*.go`** — Body transformation: identity/cache_control/user_id removal
+- **`oauth.go`** — Manage Max OAuth tokens with automatic refresh
+- **`log.go`** — Redacted logging (Bearer tokens never exposed)
 
 Enabled per-adapter via two `sdkFeatures` toggles: **`nativeForward`** (default OFF) and **`nativeBodyCheck`** (anti-forge, default ON). A non-CC body fails the check and falls through to the normal SDK path.
 
