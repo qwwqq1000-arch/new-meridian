@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,53 +20,48 @@ type RelayDeps struct {
 	Now       func() time.Time
 }
 
-type relayReq struct {
-	ConfigDir string         `json:"configDir"`
-	Account   string         `json:"account"`
-	Stream    bool           `json:"stream"`
-	Body      map[string]any `json:"body"`
-}
-
-// relayHandler returns the POST /relay handler. Flow:
-//  1. Decode request
+// relayHandler returns the POST /relay handler.
+//
+// The request body IS the verbatim client body (the exact bytes Meridian
+// received). Metadata travels in headers so the body is NEVER re-serialized in
+// transit — re-marshaling corrupts the cryptographic `signature` on assistant
+// `thinking` blocks, which Anthropic then rejects ("thinking blocks ... cannot
+// be modified"). Flow:
+//  1. Read raw body + metadata headers
 //  2. ReadToken (degrade if unavailable)
 //  3. FP.Get (degrade if unavailable)
-//  4. CloakBody
-//  5. BuildHeaders
-//  6. Forward via Transport to anthropic API
-//  7. Non-2xx → degrade; else stream body back
+//  4. CloakBody (verbatim for genuine CC; surgical only when faking)
+//  5. BuildHeaders → forward → non-2xx degrade, else stream back
 func relayHandler(d RelayDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req relayReq
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil || len(rawBody) == 0 {
 			degrade(w, "bad_request")
 			return
 		}
+		configDir := r.Header.Get("X-Native-Config-Dir")
+		account := r.Header.Get("X-Native-Account")
+		stream := r.Header.Get("X-Native-Stream") == "1"
 
-		token, _, _, err := ReadToken(req.ConfigDir)
+		token, _, _, err := ReadToken(configDir)
 		if err != nil || token == "" {
 			degrade(w, "no_token")
 			return
 		}
 
-		fp, ok := d.FP.Get(req.Account, req.ConfigDir, d.Now())
+		fp, ok := d.FP.Get(account, configDir, d.Now())
 		if !ok {
 			degrade(w, "no_fingerprint")
 			return
 		}
 
-		rawBody, err := json.Marshal(req.Body)
-		if err != nil {
-			degrade(w, "marshal_error")
-			return
-		}
-		cloaked, err := CloakBody(rawBody, "user_"+req.Account)
+		cloaked, err := CloakBody(rawBody, "user_"+account)
 		if err != nil {
 			degrade(w, "cloak_error")
 			return
 		}
 
-		headers := BuildHeaders(fp, token, d.SessionID(req.Account), uuid.NewString(), req.Stream)
+		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), stream)
 
 		upReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {
@@ -76,7 +70,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 		upReq.Header = headers
 
-		logRelay(req.Account, headers, cloaked)
+		logRelay(account, headers, cloaked)
 
 		resp, err := d.Transport.RoundTrip(upReq)
 		if err != nil {

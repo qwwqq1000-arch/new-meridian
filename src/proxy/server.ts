@@ -81,7 +81,7 @@ import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
 import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
 import { CircuitBreaker, getNativeBaseUrl } from "./nativeSupervisor"
 import { forwardToNative } from "./nativeClient"
-import { inspectClaudeCodeShape, hasThinkingBlocks } from "./ccShape"
+import { inspectClaudeCodeShape } from "./ccShape"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -439,7 +439,11 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // Hoist adapter detection before try so it's available in the catch block for telemetry
       const adapter = detectAdapter(c)
       try {
-        const body = await c.req.json()
+        // Read the raw body TEXT (not c.req.json()) so the native path can
+        // forward the exact original bytes — re-serializing corrupts thinking
+        // block signatures. We parse a local copy for inspection/routing only.
+        const rawBodyText = await c.req.text()
+        const body = JSON.parse(rawBodyText)
 
         // Validate required fields
         if (!Array.isArray(body.messages)) {
@@ -858,13 +862,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // falls through to the normal SDK path instead.
         const globalBodyCheck = getNativeSetting("nativeBodyCheck") !== false
         const ccShape = inspectClaudeCodeShape(body)
-        if (globalBodyCheck && ccShape.ok && hasThinkingBlocks(body)) {
-          // Thinking blocks carry signatures that an upstream JSON re-serializer
-          // (e.g. new-api) corrupts; forwarding natively would 400 and trip the
-          // breaker. Degrade to SDK, which reconstructs the request.
-          claudeLog("relay.native_degrade", { reason: "thinking_blocks", adapter: adapter.name, profile: profile.id })
-          diagnosticLog.session(`${requestMeta.requestId} relay=degrade:thinking`, requestMeta.requestId)
-        } else if (!globalBodyCheck || ccShape.ok) {
+        if (!globalBodyCheck || ccShape.ok) {
           const nativeBaseUrl = getNativeBaseUrl()
           if (nativeBaseUrl === null || nativeCb.isOpen(Date.now())) {
             // Sidecar unavailable or circuit open — degrade to SDK path
@@ -874,7 +872,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
             const configDir = profile.env.CLAUDE_CONFIG_DIR ?? ""
             const r = await forwardToNative({
               baseUrl: nativeBaseUrl,
-              body,
+              rawBody: rawBodyText,
               profile: { configDir, account: profile.id },
               stream,
             })
