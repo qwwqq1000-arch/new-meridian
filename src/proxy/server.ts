@@ -81,7 +81,7 @@ import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
 import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
 import { CircuitBreaker, getNativeBaseUrl } from "./nativeSupervisor"
 import { forwardToNative } from "./nativeClient"
-import { isClaudeCodeShaped } from "./ccShape"
+import { inspectClaudeCodeShape } from "./ccShape"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -857,7 +857,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // (which would risk the account if relayed under a CC fingerprint)
         // falls through to the normal SDK path instead.
         const globalBodyCheck = getNativeSetting("nativeBodyCheck") !== false
-        if (!globalBodyCheck || isClaudeCodeShaped(body)) {
+        const ccShape = inspectClaudeCodeShape(body)
+        if (!globalBodyCheck || ccShape.ok) {
           const nativeBaseUrl = getNativeBaseUrl()
           if (nativeBaseUrl === null || nativeCb.isOpen(Date.now())) {
             // Sidecar unavailable or circuit open — degrade to SDK path
@@ -936,8 +937,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
             }
           }
         } else {
-          claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
-          diagnosticLog.session(`${requestMeta.requestId} relay=reject:noncc`, requestMeta.requestId)
+          const why = ccShape.identityOk ? `tools ${ccShape.toolHits}/${ccShape.minTools} CC` : "identity"
+          claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id, why, identityOk: ccShape.identityOk, toolHits: ccShape.toolHits, toolCount: ccShape.toolCount, systemPrefix: ccShape.systemPrefix, sampleTools: ccShape.sampleTools })
+          diagnosticLog.session(`${requestMeta.requestId} relay=reject:noncc why=${why} identityOk=${ccShape.identityOk} ccTools=${ccShape.toolHits}/${ccShape.toolCount} sys="${ccShape.systemPrefix}" tools=[${ccShape.sampleTools.join(",")}]`, requestMeta.requestId)
         }
       }
 

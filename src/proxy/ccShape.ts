@@ -48,23 +48,57 @@ function firstSystemText(system: unknown): string {
   return ""
 }
 
-export function isClaudeCodeShaped(
-  body: unknown,
-  opts?: { minTools?: number },
-): boolean {
-  if (!body || typeof body !== "object") return false
+export interface CcShapeReport {
+  ok: boolean
+  /** First system text block starts with the CC identity line. */
+  identityOk: boolean
+  /** How many of the request's tools are CC PascalCase quorum tools. */
+  toolHits: number
+  /** Total tools in the request. */
+  toolCount: number
+  /** Minimum CC tools required. */
+  minTools: number
+  /** First ~60 chars of the first system text block (for diagnosing identity mismatch). */
+  systemPrefix: string
+  /** Up to 8 tool names from the request (for diagnosing naming mismatch). */
+  sampleTools: string[]
+}
+
+/**
+ * Full breakdown of why a body is / isn't Claude-Code-shaped. Used by the native
+ * gate (via `isClaudeCodeShaped`) and for actionable reject logging.
+ */
+export function inspectClaudeCodeShape(body: unknown, opts?: { minTools?: number }): CcShapeReport {
+  const minTools = opts?.minTools ?? DEFAULT_MIN_TOOLS
+  const empty: CcShapeReport = { ok: false, identityOk: false, toolHits: 0, toolCount: 0, minTools, systemPrefix: "", sampleTools: [] }
+  if (!body || typeof body !== "object") return empty
   const b = body as { system?: unknown; tools?: unknown }
 
-  // Signal 1: CC identity is the first system text block.
-  if (!firstSystemText(b.system).trimStart().startsWith(CC_IDENTITY)) return false
+  const sysText = firstSystemText(b.system)
+  const identityOk = sysText.trimStart().startsWith(CC_IDENTITY)
 
-  // Signal 2: quorum of CC PascalCase core tools.
-  if (!Array.isArray(b.tools)) return false
-  const minTools = opts?.minTools ?? DEFAULT_MIN_TOOLS
-  let hits = 0
-  for (const t of b.tools) {
+  const tools = Array.isArray(b.tools) ? b.tools : []
+  const names: string[] = []
+  let toolHits = 0
+  for (const t of tools) {
     const name = t && typeof t === "object" ? (t as { name?: unknown }).name : undefined
-    if (typeof name === "string" && CC_QUORUM_TOOLS.has(name)) hits++
+    if (typeof name === "string") {
+      names.push(name)
+      if (CC_QUORUM_TOOLS.has(name)) toolHits++
+    }
   }
-  return hits >= minTools
+
+  return {
+    ok: identityOk && toolHits >= minTools,
+    identityOk,
+    toolHits,
+    toolCount: tools.length,
+    minTools,
+    systemPrefix: sysText.slice(0, 60),
+    sampleTools: names.slice(0, 8),
+  }
+}
+
+export function isClaudeCodeShaped(body: unknown, opts?: { minTools?: number }): boolean {
+  return inspectClaudeCodeShape(body, opts).ok
 }
