@@ -13,6 +13,11 @@ describe("isClaudeCodeShaped", () => {
     expect(isClaudeCodeShaped({ system: `${CC_IDENTITY} extra`, tools: ccTools })).toBe(true)
   })
 
+  it("accepts the current CLI wording ('…for Claude, running within the Claude Agent SDK.')", () => {
+    const realSystem = [{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.\n\n# Harness" }]
+    expect(isClaudeCodeShaped({ system: realSystem, tools: ccTools })).toBe(true)
+  })
+
   it("accepts when the CC identity is not the first block (genuine CC prepends a billing-header block)", () => {
     const realCcSystem = [
       { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.148.902; cc_entrypoint=cli" },

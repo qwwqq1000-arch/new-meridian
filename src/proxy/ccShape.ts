@@ -19,7 +19,14 @@
  * Pure leaf module — no I/O, no imports from server.ts or session/.
  */
 
-export const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+/**
+ * Version-stable identity PREFIX. Genuine Claude Code's system block begins with
+ * this; the sentence then continues differently across CLI versions — older
+ * builds end "…for Claude." while current builds continue "…for Claude, running
+ * within the Claude Agent SDK." Matching the prefix (not the full sentence)
+ * accepts both and survives future wording tweaks after this point.
+ */
+export const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude"
 
 /**
  * Strong, version-stable discriminators. Genuine Claude Code always ships these
