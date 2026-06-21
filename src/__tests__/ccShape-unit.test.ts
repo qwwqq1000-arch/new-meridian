@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { isClaudeCodeShaped, CC_IDENTITY } from "../proxy/ccShape"
+import { isClaudeCodeShaped, hasThinkingBlocks, CC_IDENTITY } from "../proxy/ccShape"
 
 const ccSystem = [{ type: "text", text: `${CC_IDENTITY}\n\nYou are an interactive CLI tool...`, cache_control: { type: "ephemeral" } }]
 const ccTools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "Task"].map(name => ({ name }))
@@ -57,5 +57,18 @@ describe("isClaudeCodeShaped", () => {
 
   it("honors a custom minTools threshold", () => {
     expect(isClaudeCodeShaped({ system: ccSystem, tools: [{ name: "Bash" }, { name: "Read" }] }, { minTools: 2 })).toBe(true)
+  })
+})
+
+describe("hasThinkingBlocks", () => {
+  it("detects thinking / redacted_thinking blocks in assistant messages", () => {
+    expect(hasThinkingBlocks({ messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "x", signature: "s" }] }] })).toBe(true)
+    expect(hasThinkingBlocks({ messages: [{ role: "assistant", content: [{ type: "redacted_thinking", data: "x" }] }] })).toBe(true)
+  })
+
+  it("returns false for thinking-free bodies", () => {
+    expect(hasThinkingBlocks({ messages: [{ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] }] })).toBe(false)
+    expect(hasThinkingBlocks({})).toBe(false)
+    expect(hasThinkingBlocks(null)).toBe(false)
   })
 })

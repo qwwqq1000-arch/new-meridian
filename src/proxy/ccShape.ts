@@ -114,3 +114,29 @@ export function inspectClaudeCodeShape(body: unknown, opts?: { minTools?: number
 export function isClaudeCodeShaped(body: unknown, opts?: { minTools?: number }): boolean {
   return inspectClaudeCodeShape(body, opts).ok
 }
+
+/**
+ * True if any assistant message carries a `thinking` / `redacted_thinking` block.
+ *
+ * Such blocks carry a cryptographic signature that must reach Anthropic exactly
+ * as originally returned. When the request has passed through an intermediary
+ * that re-serializes JSON (e.g. a new-api gateway), the signature no longer
+ * matches and Anthropic rejects the native forward with a 400 ("thinking blocks
+ * … cannot be modified"). We can't repair an already-mangled block, so the
+ * native path degrades these to the SDK (which reconstructs the request) instead
+ * of making a doomed upstream call that would also trip the circuit breaker.
+ */
+export function hasThinkingBlocks(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false
+  const msgs = (body as { messages?: unknown }).messages
+  if (!Array.isArray(msgs)) return false
+  for (const m of msgs) {
+    const content = m && typeof m === "object" ? (m as { content?: unknown }).content : undefined
+    if (!Array.isArray(content)) continue
+    for (const blk of content) {
+      const t = blk && typeof blk === "object" ? (blk as { type?: unknown }).type : undefined
+      if (t === "thinking" || t === "redacted_thinking") return true
+    }
+  }
+  return false
+}
