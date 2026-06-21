@@ -81,6 +81,7 @@ import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
 import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
 import { forwardNative } from "./transparentRelay"
 import { isClaudeCodeShaped } from "./ccShape"
+import { getCliFingerprint, parseTtlMs } from "./cliFingerprint"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -846,17 +847,28 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         clientForcedSdk: c.req.header("x-meridian-mode") === "sdk",
         profileType: profile.type,
       })) {
-        // Anti-forgery: adapter detection is header-spoofable, so only forward
-        // requests whose body genuinely looks like Claude Code. A non-CC body
-        // (which would risk the account if relayed under a CC fingerprint)
-        // falls through to the normal SDK path instead.
-        if (!sdkFeatures.nativeBodyCheck || isClaudeCodeShaped(body)) {
-          const clientHeaders: Record<string, string> = {}
-          c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
-          claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env } })
+        // Anti-forgery: adapter detection is header-spoofable, and an upstream
+        // gateway (new-api) preserves the body but mangles the headers — so the
+        // body is the reliable signal. A non-CC body falls through to the SDK.
+        if (sdkFeatures.nativeBodyCheck && !isClaudeCodeShaped(body)) {
+          claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
+        } else {
+          // Inject a GENUINE CLI fingerprint (captured from the local binary)
+          // over whatever the gateway sent. No fresh fingerprint yet → degrade
+          // to passthrough for this request; the background capture fills the
+          // cache for subsequent ones.
+          const fingerprint = await getCliFingerprint({
+            ttlMs: parseTtlMs(process.env.MERIDIAN_NATIVE_FINGERPRINT_TTL),
+            env: profile.env,
+          })
+          if (fingerprint) {
+            const clientHeaders: Record<string, string> = {}
+            c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
+            claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+            return await forwardNative({ body, clientHeaders, fingerprint, profile: { type: profile.type, env: profile.env } })
+          }
+          claudeLog("relay.native_fingerprint_pending", { adapter: adapter.name, profile: profile.id })
         }
-        claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
       }
 
       // --- Passthrough mode ---

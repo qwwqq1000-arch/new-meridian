@@ -1,36 +1,36 @@
 /**
- * Native passthrough: forward a Claude Code request VERBATIM to api.anthropic.com
- * using the account's Max OAuth token.
+ * Native passthrough: forward a Claude Code request to api.anthropic.com using
+ * the account's Max OAuth token, carrying a GENUINE Claude Code fingerprint.
  *
- * Design: the incoming request from a genuine Claude Code client already carries
- * the authentic CLI fingerprint (user-agent `claude-cli/…`, the real
- * `anthropic-beta` for this request, `x-stainless-*`, and a `system` with
- * `cache_control`). The only thing it lacks is OAuth auth — it reached the proxy
- * in API-key mode with a placeholder key. So we mirror its own headers, swap the
- * placeholder auth for a real `Authorization: Bearer`, ensure the OAuth beta flag
- * is present, and forward the body unchanged. No fabricated fingerprint, no
- * system rewriting — we relay a real CC request through the OAuth channel.
- *
- * The caller gates this on a Claude-Code shape check (see ccShape.ts), so only
- * genuinely CC-shaped requests are ever forwarded here.
+ * The incoming request may have reached the proxy through an upstream gateway
+ * (e.g. new-api) that rewrote `user-agent` to its own (Go-http-client) and
+ * dropped the `x-stainless-*` headers — so the genuine CLI fingerprint can't be
+ * read off the incoming request. Instead we mirror the incoming request's
+ * surviving headers (anthropic-beta/version, content-type) and OVERRIDE the
+ * fingerprint headers (`user-agent`, `x-app`, `x-stainless-*`) with one captured
+ * from the real local CLI (see cliFingerprint.ts). Result: api.anthropic.com
+ * sees an authentic CLI fingerprint regardless of what the gateway did.
  *
  * Leaf module — no imports from server.ts or session/.
  */
 
 import { createPlatformCredentialStore, refreshOAuthToken, type CredentialStore } from "./tokenRefresh"
+import type { Fingerprint } from "./cliFingerprint"
 
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+// Genuine Claude Code posts to /v1/messages with the ?beta=true query param.
+const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages?beta=true"
 const OAUTH_BETA = "oauth-2025-04-20"
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 /**
- * Headers that must NOT be mirrored to the upstream: the client's placeholder
- * auth, hop-by-hop / length headers (re-derived by fetch), and Meridian's own
- * internal routing headers.
+ * Headers never mirrored upstream: the client's placeholder auth, hop-by-hop /
+ * length headers (re-derived by fetch), Meridian's internal routing headers, and
+ * proxy-chain headers (which would leak the gateway topology / real IP).
  */
 const STRIP_HEADERS = new Set([
   "x-api-key", "authorization", "host", "content-length",
   "accept-encoding", "content-encoding", "connection",
+  "forwarded", "x-real-ip", "via",
 ])
 
 async function readToken(store: CredentialStore): Promise<string | null> {
@@ -39,20 +39,25 @@ async function readToken(store: CredentialStore): Promise<string | null> {
 }
 
 /**
- * Build the upstream header set by mirroring the client's own (genuine CC)
- * headers, swapping in the real OAuth Bearer token, and ensuring the OAuth beta
- * flag is present (the client, in API-key mode, won't have sent it).
+ * Build the upstream header set: mirror the incoming headers (minus the strip
+ * list / x-forwarded-* / x-meridian-*), override the fingerprint headers with
+ * the captured genuine CLI fingerprint, set a fresh per-request retry count,
+ * inject the OAuth Bearer, and ensure the OAuth beta flag is present.
  */
 export function buildRelayHeaders(input: {
   clientHeaders: Record<string, string>
+  fingerprint: Fingerprint
   token: string
 }): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(input.clientHeaders)) {
     const lk = k.toLowerCase()
-    if (STRIP_HEADERS.has(lk) || lk.startsWith("x-meridian-")) continue
+    if (STRIP_HEADERS.has(lk) || lk.startsWith("x-meridian-") || lk.startsWith("x-forwarded-")) continue
     out[lk] = v
   }
+  // Override with the genuine captured CLI fingerprint (UA / x-app / x-stainless-*).
+  for (const [k, v] of Object.entries(input.fingerprint)) out[k.toLowerCase()] = v
+  out["x-stainless-retry-count"] = "0" // per-request; first attempt
   out["authorization"] = `Bearer ${input.token}`
   const beta = out["anthropic-beta"]
   if (!beta) {
@@ -66,6 +71,7 @@ export function buildRelayHeaders(input: {
 export async function forwardNative(input: {
   body: unknown
   clientHeaders: Record<string, string>
+  fingerprint: Fingerprint
   profile: { type: string; env: Record<string, string> }
   deps?: { fetchImpl?: FetchLike; store?: CredentialStore }
 }): Promise<Response> {
@@ -90,7 +96,7 @@ export async function forwardNative(input: {
   const payload = JSON.stringify(input.body)
   const send = (tok: string) => fetchImpl(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
-    headers: buildRelayHeaders({ clientHeaders: input.clientHeaders, token: tok }),
+    headers: buildRelayHeaders({ clientHeaders: input.clientHeaders, fingerprint: input.fingerprint, token: tok }),
     body: payload,
   })
 

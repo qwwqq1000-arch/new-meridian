@@ -228,13 +228,22 @@ When enabled, a request routed to the adapter is forwarded **verbatim** to
 `api.anthropic.com` using your Max OAuth token, bypassing the Agent SDK. This
 removes MCP tool re-wrapping and injected prompts, saving tokens.
 
-It works because a genuine Claude Code client already sends an authentic request
-(real `claude-cli/…` user-agent, `anthropic-beta`, `x-stainless-*`, and a `system`
-with `cache_control`); the only thing it lacks is OAuth auth (it reached the proxy
-with a placeholder key). Meridian therefore **mirrors the client's own headers**,
-swaps in a real `Authorization: Bearer`, ensures the OAuth beta flag is present, and
-forwards the body unchanged. Nothing is fabricated — a real Claude Code request is
-relayed through the OAuth channel.
+Meridian forwards the request body unchanged and carries a **genuine Claude Code
+fingerprint** captured from the local CLI. It runs the real `claude` binary once with
+`ANTHROPIC_LOG=debug`, reads the actual outgoing request headers it emits
+(`user-agent: claude-cli/…`, `x-app`, the full `x-stainless-*` set), caches them, and
+injects them on each forward (plus the OAuth Bearer + `?beta=true`). Because the
+fingerprint is captured from the real binary, it auto-follows CLI version bumps.
+
+This works even when an upstream gateway (e.g. **new-api**) sits in front and rewrites
+`user-agent` / drops `x-stainless-*` — the genuine fingerprint is reconstructed from the
+local CLI, not read off the (mangled) incoming request.
+
+- **Capture lifecycle:** lazy. The first native request with no fresh fingerprint
+  degrades to passthrough and triggers a background capture; once cached, requests go
+  native. **No fingerprint → passthrough** (never forwards a guessed one).
+- **Cache TTL:** `MERIDIAN_NATIVE_FINGERPRINT_TTL` (e.g. `1h`, `30s`), default `5m`. Each
+  capture makes one small real request; raise the TTL to capture less often.
 
 **Two safety toggles (per adapter, in Settings → SDK Features):**
 - **Native Forwarding** (default OFF) — enable native for this adapter. Native is a
