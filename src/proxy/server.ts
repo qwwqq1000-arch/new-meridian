@@ -50,7 +50,7 @@ import { mapModelToClaudeModel, resolveClaudeExecutableAsync, resolveSdkModelDef
 import type { AnthropicSseEvent } from "./openai"
 import { translateOpenAiToAnthropic, translateAnthropicToOpenAi, buildModelList, createSseTranslator } from "./openai"
 import { extractAdvisorModel, getLastUserMessage, stripAdvisorTools } from "./messages"
-import { requireAuth, authEnabled } from "./auth"
+import { requireAuth, authEnabled, isAuthed } from "./auth"
 import { createManualOAuthSession, exchangeManualOAuthCode } from "./profileCli"
 import { detectAdapter } from "./adapters/detect"
 import { buildQueryOptions, type QueryContext } from "./query"
@@ -390,6 +390,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   app.use("/auth/*", requireAuth)
 
   app.get("/", (c) => {
+    // Hide the dashboard from unauthenticated callers: return 404 (not 401 or the
+    // HTML) so the UI isn't discoverable without a key. Browsers authenticate via
+    // ?key=, API clients via x-api-key/Bearer. No-op when auth is disabled.
+    if (!isAuthed(c)) return c.notFound()
     // API clients get JSON, browsers get the landing page
     const accept = c.req.header("accept") || ""
     if (accept.includes("application/json") && !accept.includes("text/html")) {

@@ -52,6 +52,18 @@ describe("MERIDIAN_API_KEY — /settings/api/* (regression for #477)", () => {
     expect(res.status).toBe(401)
   })
 
+  it("404s the dashboard (GET /) without auth — hides the UI entirely", async () => {
+    const { app } = createProxyServer({ port: 0, host: "127.0.0.1" })
+    const res = await app.fetch(new Request("http://localhost/", { headers: { accept: "text/html" } }))
+    expect(res.status).toBe(404)
+  })
+
+  it("serves the dashboard (GET /) with a valid key", async () => {
+    const { app } = createProxyServer({ port: 0, host: "127.0.0.1" })
+    const res = await app.fetch(new Request("http://localhost/?key=" + TEST_KEY, { headers: { accept: "text/html" } }))
+    expect(res.status).toBe(200)
+  })
+
   it("rejects DELETE /settings/api/features/:adapter without auth", async () => {
     const { app } = createProxyServer({ port: 0, host: "127.0.0.1" })
     const res = await app.fetch(new Request("http://localhost/settings/api/features/opencode", {
