@@ -20,6 +20,9 @@ func TestBuildHeaders(t *testing.T) {
 	if h.Get("accept") != "application/json" {
 		t.Fatalf("non-stream accept: %q", h.Get("accept"))
 	}
+	if h.Get("accept-encoding") != "identity" {
+		t.Fatalf("non-stream accept-encoding: %q", h.Get("accept-encoding"))
+	}
 }
 
 func TestBuildHeadersStreamAccept(t *testing.T) {

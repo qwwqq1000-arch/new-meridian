@@ -13,12 +13,14 @@ func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stre
 	h.Set("x-claude-code-session-id", sessionID)
 	h.Set("x-client-request-id", clientRequestID)
 	h.Set("connection", "keep-alive")
+	// Always request identity encoding so upstream never compresses the body.
+	// This avoids double-decode on the non-stream path (undici already decompresses)
+	// and keeps the stream path consistent.
+	h.Set("accept-encoding", "identity")
 	if stream {
 		h.Set("accept", "text/event-stream")
-		h.Set("accept-encoding", "identity")
 	} else {
 		h.Set("accept", "application/json")
-		h.Set("accept-encoding", "gzip, deflate, br, zstd")
 	}
 	return h
 }

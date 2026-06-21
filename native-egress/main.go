@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -56,11 +57,25 @@ func newServer() http.Handler {
 	return mux
 }
 
-func main() {
-	addr := os.Getenv("NATIVE_EGRESS_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:0"
+// resolveAddr determines the listen address. Priority:
+//  1. NATIVE_EGRESS_ADDR env var (full addr override)
+//  2. --port flag (binds 127.0.0.1:<port>)
+//  3. default: 127.0.0.1:0 (random port, only useful in tests)
+func resolveAddr(port int, envAddr string) string {
+	if envAddr != "" {
+		return envAddr
 	}
+	if port != 0 {
+		return fmt.Sprintf("127.0.0.1:%d", port)
+	}
+	return "127.0.0.1:0"
+}
+
+func main() {
+	port := flag.Int("port", 0, "port to listen on (overridden by NATIVE_EGRESS_ADDR)")
+	flag.Parse()
+
+	addr := resolveAddr(*port, os.Getenv("NATIVE_EGRESS_ADDR"))
 	fmt.Fprintf(os.Stderr, "native-egress listening on %s\n", addr)
 	if err := http.ListenAndServe(addr, newServer()); err != nil {
 		fmt.Fprintln(os.Stderr, "native-egress exited:", err)

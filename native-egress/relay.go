@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -91,6 +92,13 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 
 		for k, vs := range resp.Header {
+			// Skip content-encoding and content-length: we always send
+			// identity-encoded bodies and let the Node HTTP layer handle framing.
+			// Forwarding these would cause double-decode or length mismatches.
+			kl := strings.ToLower(k)
+			if kl == "content-encoding" || kl == "content-length" {
+				continue
+			}
 			for _, v := range vs {
 				w.Header().Add(k, v)
 			}
