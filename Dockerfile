@@ -1,3 +1,11 @@
+# ---- Go build stage ----
+FROM golang:1.25-alpine AS go-build
+WORKDIR /src/native-egress
+COPY native-egress/go.mod native-egress/go.sum ./
+RUN go mod download
+COPY native-egress/ ./
+RUN go mod tidy && CGO_ENABLED=0 go build -o /out/native-egress .
+
 # ---- Build stage ----
 FROM oven/bun:1 AS build
 
@@ -49,6 +57,8 @@ RUN node /app/node_modules/@anthropic-ai/claude-code/install.cjs
 RUN mkdir -p /app/bin/shims \
     && ln -sf /app/node_modules/@anthropic-ai/claude-code/bin/claude.exe /app/bin/shims/claude
 ENV PATH="/app/bin/shims:$PATH"
+COPY --from=go-build --chown=claude:claude /out/native-egress /app/native-egress
+RUN chmod +x /app/native-egress
 COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh ./bin/
 RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh
 
