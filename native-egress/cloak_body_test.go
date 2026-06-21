@@ -51,6 +51,22 @@ func TestCloakBodyIdentityInNonFirstBlockNotDuplicated(t *testing.T) {
 	}
 }
 
+// A genuine CC body (identity present) must be forwarded BYTE-FOR-BYTE verbatim.
+// Re-marshaling reorders keys / reformats numbers and corrupts the `signature`
+// on assistant thinking blocks → Anthropic 400 "thinking blocks must remain as
+// they were". The raw bytes here use non-alphabetical key order on purpose; a
+// re-marshal would reorder them.
+func TestCloakBodyVerbatimWhenCcShaped(t *testing.T) {
+	raw := []byte(`{"model":"claude-sonnet-4-6","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"SIG_DO_NOT_TOUCH=="}]}]}`)
+	out, err := CloakBody(raw, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(raw) {
+		t.Fatalf("CC body must be verbatim.\n got: %s\nwant: %s", out, raw)
+	}
+}
+
 func TestCloakBodyStringSystem(t *testing.T) {
 	out, _ := CloakBody([]byte(`{"system":"you are X","messages":[]}`), "u")
 	var m map[string]any
