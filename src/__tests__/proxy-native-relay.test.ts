@@ -11,13 +11,16 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   tool: () => ({}),
 }))
 mock.module("../logger", () => ({ claudeLog: () => {}, withClaudeLogContext: (_c: unknown, fn: () => unknown) => fn() }))
+
+// Module-level toggle so individual tests can simulate a null (unavailable) base URL.
+let baseUrlNull = false
 mock.module("../proxy/nativeSupervisor", () => ({
   CircuitBreaker: class {
     isOpen() { return false }
     recordFailure() {}
     recordSuccess() {}
   },
-  getNativeBaseUrl: () => "http://127.0.0.1:65500",
+  getNativeBaseUrl: () => baseUrlNull ? null : "http://127.0.0.1:65500",
 }))
 
 let degradeNext = false
@@ -51,6 +54,7 @@ describe("native relay branch (Go sidecar delegation)", () => {
     clearSessionCache()
     sdkInvoked = false
     degradeNext = false
+    baseUrlNull = false
     savedEnv = process.env.MERIDIAN_NATIVE_FORWARD
     process.env.MERIDIAN_NATIVE_FORWARD = "1"
   })
@@ -81,6 +85,37 @@ describe("native relay branch (Go sidecar delegation)", () => {
     }))
     expect(sdkInvoked).toBe(true)
     // Response from SDK (not the native response)
+    const j = await res.json().catch(() => ({})) as { relayed?: boolean }
+    expect(j.relayed).toBeUndefined()
+  })
+
+  it("(c) null baseUrl (sidecar unavailable): SDK invoked, not native response", async () => {
+    baseUrlNull = true
+    const res = await makeApp().fetch(new Request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-meridian-profile": "p", "user-agent": "claude-cli/2.1.0" },
+      body: JSON.stringify(ccShapedBody),
+    }))
+    expect(sdkInvoked).toBe(true)
+    const j = await res.json().catch(() => ({})) as { relayed?: boolean }
+    expect(j.relayed).toBeUndefined()
+  })
+
+  it("(d) non-CC body: anti-forgery rejects native, SDK invoked", async () => {
+    // Body does NOT look like Claude Code (OpenCode-shaped: wrong system text, lowercase tool names)
+    const nonCcBody = {
+      model: "claude-3",
+      system: [{ type: "text", text: "You are OpenCode." }],
+      tools: [{ name: "read" }, { name: "write" }, { name: "bash" }, { name: "edit" }],
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    }
+    const res = await makeApp().fetch(new Request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-meridian-profile": "p", "user-agent": "claude-cli/2.1.0" },
+      body: JSON.stringify(nonCcBody),
+    }))
+    expect(sdkInvoked).toBe(true)
     const j = await res.json().catch(() => ({})) as { relayed?: boolean }
     expect(j.relayed).toBeUndefined()
   })

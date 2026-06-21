@@ -98,9 +98,8 @@ const exec = promisify(execCallback)
 
 let claudeExecutable = ""
 
-// Module-level circuit breaker for native forwarding.
-// Tracks failures/successes across requests; shared with the supervisor singleton
-// in nativeSupervisor.ts.
+// Server-side circuit breaker for native forwarding (tracks forwardToNative response failures).
+// Separate from NativeSupervisor's internal CB, which tracks health-poll failures — by design.
 const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
