@@ -1,8 +1,12 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 type Fingerprint map[string]string
@@ -17,6 +21,8 @@ var (
 	headersBlockRe = regexp.MustCompile(`(?s)headers:\s*\{(.*?)\}`)
 	headerPairRe   = regexp.MustCompile(`(?:"([^"\n]+)"|([A-Za-z0-9-]+))\s*:\s*"([^"]*)"`)
 )
+
+func osEnviron() []string { return os.Environ() }
 
 // ParseFingerprint extracts the complete header set from ANTHROPIC_LOG=debug
 // output, dropping per-request/transport headers. ok=false unless a genuine
@@ -41,4 +47,54 @@ func ParseFingerprint(debugLog string) (Fingerprint, bool) {
 		return nil, false
 	}
 	return fp, true
+}
+
+type fpEntry struct {
+	fp         Fingerprint
+	capturedAt time.Time
+}
+
+type FPCache struct {
+	ttl     time.Duration
+	capture func(configDir string) (string, error)
+	mu      sync.Mutex
+	entries map[string]fpEntry
+}
+
+func NewFPCache(ttl time.Duration, capture func(string) (string, error)) *FPCache {
+	return &FPCache{ttl: ttl, capture: capture, entries: map[string]fpEntry{}}
+}
+
+func (c *FPCache) Get(account, configDir string, now time.Time) (Fingerprint, bool) {
+	c.mu.Lock()
+	if e, ok := c.entries[account]; ok && now.Sub(e.capturedAt) <= c.ttl {
+		c.mu.Unlock()
+		return e.fp, true
+	}
+	c.mu.Unlock()
+
+	log, err := c.capture(configDir)
+	if err != nil {
+		return nil, false
+	}
+	fp, ok := ParseFingerprint(log)
+	if !ok {
+		return nil, false
+	}
+	c.mu.Lock()
+	c.entries[account] = fpEntry{fp: fp, capturedAt: now}
+	c.mu.Unlock()
+	return fp, true
+}
+
+// defaultCapture returns a capture func that runs the real CLI with
+// ANTHROPIC_LOG=debug to surface its outgoing headers.
+func defaultCapture(claudePath, configDir string) func(string) (string, error) {
+	return func(string) (string, error) {
+		cmd := exec.Command(claudePath, "-p", "hi")
+		cmd.Env = append(append([]string{}, osEnviron()...),
+			"ANTHROPIC_LOG=debug", "CLAUDE_CONFIG_DIR="+configDir)
+		out, _ := cmd.CombinedOutput() // headers are logged before any non-2xx; ignore exit code
+		return string(out), nil
+	}
 }
