@@ -34,8 +34,20 @@ export interface AdapterFeatures {
   sdkDebug: boolean
   /** Comma-separated extra directories Claude can access (beyond CWD) */
   additionalDirectories: string
-  /** Relay mode: auto (pipeline decides), internal (MCP tools), passthrough (SDK passthrough), native (direct forward to api.anthropic.com) */
+  /** Relay mode override for the SDK path: auto (pipeline decides), internal (MCP tools), passthrough (SDK passthrough). */
   relayMode: "auto" | "internal" | "passthrough" | "native"
+  /**
+   * Enable native forwarding: when a request routes to this adapter and the
+   * profile has an OAuth token, forward it verbatim to api.anthropic.com,
+   * bypassing the SDK. Server-side decision only — a client cannot enable it.
+   */
+  nativeForward: boolean
+  /**
+   * Anti-forgery gate for native: only forward requests whose body genuinely
+   * looks like Claude Code (see ccShape.ts). Blocks a non-CC client that spoofed
+   * CC detection headers from spending the OAuth token / risking the account.
+   */
+  nativeBodyCheck: boolean
 }
 
 export type FeatureConfig = Record<string, Partial<AdapterFeatures>>
@@ -58,6 +70,8 @@ const DEFAULT_FEATURES: AdapterFeatures = {
   sdkDebug: false,
   additionalDirectories: "",
   relayMode: "auto",
+  nativeForward: false,
+  nativeBodyCheck: true,
 }
 
 /**
@@ -144,7 +158,7 @@ export function getFeaturesForAdapter(adapterName: string): AdapterFeatures {
  * Get the full config for all adapters (for the settings UI).
  */
 export function getAllFeatureConfigs(): Record<string, AdapterFeatures> {
-  const adapters = ["opencode", "crush", "forgecode", "pi", "droid", "passthrough", "openai"]
+  const adapters = ["claude-code", "opencode", "crush", "forgecode", "pi", "droid", "passthrough", "openai"]
   const result: Record<string, AdapterFeatures> = {}
   for (const name of adapters) {
     result[name] = getFeaturesForAdapter(name)

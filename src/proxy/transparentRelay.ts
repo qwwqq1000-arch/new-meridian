@@ -1,26 +1,71 @@
 /**
- * Native passthrough: forward a request verbatim to api.anthropic.com using a
- * Max OAuth token, spoofing a genuine Claude Code fingerprint.
+ * Native passthrough: forward a Claude Code request VERBATIM to api.anthropic.com
+ * using the account's Max OAuth token.
  *
- * Leaf module. Pure helpers here (identity + headers); the network forward is
- * added in a later task. No imports from server.ts or session/.
+ * Design: the incoming request from a genuine Claude Code client already carries
+ * the authentic CLI fingerprint (user-agent `claude-cli/…`, the real
+ * `anthropic-beta` for this request, `x-stainless-*`, and a `system` with
+ * `cache_control`). The only thing it lacks is OAuth auth — it reached the proxy
+ * in API-key mode with a placeholder key. So we mirror its own headers, swap the
+ * placeholder auth for a real `Authorization: Bearer`, ensure the OAuth beta flag
+ * is present, and forward the body unchanged. No fabricated fingerprint, no
+ * system rewriting — we relay a real CC request through the OAuth channel.
+ *
+ * The caller gates this on a Claude-Code shape check (see ccShape.ts), so only
+ * genuinely CC-shaped requests are ever forwarded here.
+ *
+ * Leaf module — no imports from server.ts or session/.
  */
 
 import { createPlatformCredentialStore, refreshOAuthToken, type CredentialStore } from "./tokenRefresh"
-import type { Fingerprint } from "./claudeEnvelope"
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+const OAUTH_BETA = "oauth-2025-04-20"
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * Headers that must NOT be mirrored to the upstream: the client's placeholder
+ * auth, hop-by-hop / length headers (re-derived by fetch), and Meridian's own
+ * internal routing headers.
+ */
+const STRIP_HEADERS = new Set([
+  "x-api-key", "authorization", "host", "content-length",
+  "accept-encoding", "content-encoding", "connection",
+])
 
 async function readToken(store: CredentialStore): Promise<string | null> {
   const creds = await store.read()
   return creds?.claudeAiOauth?.accessToken ?? null
 }
 
-export async function forwardNative(input: {
-  body: { system?: unknown; [k: string]: unknown }
+/**
+ * Build the upstream header set by mirroring the client's own (genuine CC)
+ * headers, swapping in the real OAuth Bearer token, and ensuring the OAuth beta
+ * flag is present (the client, in API-key mode, won't have sent it).
+ */
+export function buildRelayHeaders(input: {
   clientHeaders: Record<string, string>
-  fingerprint: Fingerprint
+  token: string
+}): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(input.clientHeaders)) {
+    const lk = k.toLowerCase()
+    if (STRIP_HEADERS.has(lk) || lk.startsWith("x-meridian-")) continue
+    out[lk] = v
+  }
+  out["authorization"] = `Bearer ${input.token}`
+  const beta = out["anthropic-beta"]
+  if (!beta) {
+    out["anthropic-beta"] = OAUTH_BETA
+  } else if (!beta.split(",").map(s => s.trim()).includes(OAUTH_BETA)) {
+    out["anthropic-beta"] = `${OAUTH_BETA},${beta}`
+  }
+  return out
+}
+
+export async function forwardNative(input: {
+  body: unknown
+  clientHeaders: Record<string, string>
   profile: { type: string; env: Record<string, string> }
   deps?: { fetchImpl?: FetchLike; store?: CredentialStore }
 }): Promise<Response> {
@@ -36,15 +81,17 @@ export async function forwardNative(input: {
     token = await readToken(store)
   }
   if (!token) {
-    return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "No OAuth token available for native relay" } }), { status: 400, headers: { "content-type": "application/json" } })
+    return new Response(
+      JSON.stringify({ type: "error", error: { type: "authentication_error", message: "No OAuth token available for native relay" } }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    )
   }
 
-  const fingerprint = input.fingerprint
-  const outBody = { ...input.body, system: ensureClaudeCodeIdentity(input.body.system) }
+  const payload = JSON.stringify(input.body)
   const send = (tok: string) => fetchImpl(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
-    headers: buildRelayHeaders({ fingerprint, token: tok, clientHeaders: input.clientHeaders }),
-    body: JSON.stringify(outBody),
+    headers: buildRelayHeaders({ clientHeaders: input.clientHeaders, token: tok }),
+    body: payload,
   })
 
   let res = await send(token)
@@ -56,48 +103,4 @@ export async function forwardNative(input: {
     }
   }
   return res
-}
-
-export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
-
-const OAUTH_BETA = "oauth-2025-04-20"
-
-type TextBlock = { type: "text"; text: string }
-
-/** Normalize `system` to a block array whose first block is the identity line. */
-export function ensureClaudeCodeIdentity(system: unknown): TextBlock[] {
-  const blocks: TextBlock[] = []
-  if (typeof system === "string") {
-    if (system.length > 0) blocks.push({ type: "text", text: system })
-  } else if (Array.isArray(system)) {
-    for (const b of system) {
-      if (b && typeof b === "object" && (b as { type?: unknown }).type === "text" && typeof (b as { text?: unknown }).text === "string") {
-        blocks.push({ type: "text", text: (b as { text: string }).text })
-      }
-    }
-  }
-  if (blocks.length > 0 && blocks[0]!.text === CLAUDE_CODE_IDENTITY) return blocks
-  return [{ type: "text", text: CLAUDE_CODE_IDENTITY }, ...blocks]
-}
-
-const STRIP_HEADERS = new Set(["x-api-key", "host", "content-length", "authorization", "accept-encoding"])
-
-export function buildRelayHeaders(input: {
-  fingerprint: Record<string, string>
-  token: string
-  clientHeaders: Record<string, string>
-}): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(input.fingerprint)) out[k.toLowerCase()] = v
-  out["authorization"] = `Bearer ${input.token}`
-  const beta = out["anthropic-beta"]
-  if (!beta) {
-    out["anthropic-beta"] = OAUTH_BETA
-  } else if (!beta.split(",").map(s => s.trim()).includes(OAUTH_BETA)) {
-    out["anthropic-beta"] = `${OAUTH_BETA},${beta}`
-  }
-  for (const k of STRIP_HEADERS) {
-    if (k !== "authorization") delete out[k]
-  }
-  return out
 }

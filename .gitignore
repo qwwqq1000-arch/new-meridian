@@ -40,3 +40,4 @@ apps/desktop/src-tauri/target/
 # Local agent tooling (per-developer; never commit)
 .claude/
 .pylon/
+testnode

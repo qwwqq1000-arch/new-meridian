@@ -222,25 +222,37 @@ For large tool sets (>15 tools), non-core tools are automatically deferred via t
 - **Blocked tools** — 13 built-in SDK tools (Read, Write, Bash, etc.) are blocked to prevent conflicts with the client's own tools. 15 additional Claude Code-only tools (CronCreate, EnterWorktree, Agent, etc.) are blocked because they require capabilities that external clients don't support.
 - **Subagent extraction** — Meridian parses the client's Task tool description to extract subagent names and build SDK AgentDefinitions. If the client's agent framework uses a non-standard format, subagent routing may not work automatically.
 
-### Native passthrough (experimental, off by default)
+### Native forwarding (experimental, off by default)
 
-`relayMode: native` (set per adapter on the SDK Features page) forwards requests
-verbatim to `api.anthropic.com` using your Max OAuth token, bypassing the Agent
-SDK. This removes MCP tool re-wrapping and injected prompts, saving tokens.
+When enabled, a request routed to the adapter is forwarded **verbatim** to
+`api.anthropic.com` using your Max OAuth token, bypassing the Agent SDK. This
+removes MCP tool re-wrapping and injected prompts, saving tokens.
+
+It works because a genuine Claude Code client already sends an authentic request
+(real `claude-cli/…` user-agent, `anthropic-beta`, `x-stainless-*`, and a `system`
+with `cache_control`); the only thing it lacks is OAuth auth (it reached the proxy
+with a placeholder key). Meridian therefore **mirrors the client's own headers**,
+swaps in a real `Authorization: Bearer`, ensures the OAuth beta flag is present, and
+forwards the body unchanged. Nothing is fabricated — a real Claude Code request is
+relayed through the OAuth channel.
+
+**Two safety toggles (per adapter, in Settings → SDK Features):**
+- **Native Forwarding** (default OFF) — enable native for this adapter. Native is a
+  server-side decision; a client can never enable it. Intended for the Claude Code
+  adapter. (Operator escape hatch: `MERIDIAN_NATIVE_FORWARD=1`. A client may only opt
+  OUT via header `x-meridian-mode: sdk` — never opt in.)
+- **Anti-Forge Body Check** (default ON) — only forward natively when the request body
+  genuinely looks like Claude Code (CC identity + CC tool quorum). Because adapter
+  detection is header-based and spoofable, this stops a non-CC client that set
+  `user-agent: claude-cli/…` from spending your OAuth token; a non-CC body falls
+  through to the normal SDK path.
 
 **Risk:** This works *around* the SDK rather than through it. Since January 2026
-Anthropic restricts Max OAuth tokens used outside Claude.ai / Claude Code. Meridian
-spoofs a genuine Claude Code fingerprint to reduce static detection, but behavioral
-signals (request volume, non-CLI tool/prompt shapes, account/IP sharing) can still
-flag an account. A perfect fingerprint is not a guarantee of safety. Use it only:
-- on a single account you control, one user, one IP — never shared or rotated;
-- ideally with the Claude Code client (its tool/prompt shape already matches the CLI);
-- within normal single-user volume (Meridian backs off near rate-limit windows).
-
-Enable per adapter in **Settings → SDK Features → Relay Mode**, or set
-`MERIDIAN_NATIVE_FORWARD=1`. Per-request override: header `x-meridian-mode: native | sdk`.
-
-If fingerprint capture fails, the request degrades to SDK passthrough (no guessed fallback).
+Anthropic restricts Max OAuth tokens used outside Claude.ai / Claude Code. Forwarding
+a genuine Claude Code request reduces static detection, but behavioral signals (request
+volume, account/IP sharing) can still flag an account. Use it only on a single account
+you control — one user, one IP, never shared or rotated — and prefer the Claude Code
+client (whose requests are genuinely CC-shaped).
 
 ## Multi-Profile Support
 

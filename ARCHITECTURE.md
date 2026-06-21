@@ -41,9 +41,9 @@ src/
 │   ├── adapters/
 │   │   ├── opencode.ts        ← OpenCode adapter (session headers, CWD extraction, tool config)
 │   │   └── forgecode.ts       ← ForgeCode adapter (fingerprint sessions, XML CWD, passthrough)
-│   ├── relayMode.ts           ← Relay mode resolution (auto/internal/passthrough/native) and eligibility
-│   ├── claudeEnvelope.ts      ← Dynamic Claude Code fingerprint capture for native mode
-│   ├── transparentRelay.ts    ← Direct forward to api.anthropic.com with OAuth token refresh
+│   ├── relayMode.ts           ← Native eligibility + internal/passthrough override (pure)
+│   ├── ccShape.ts             ← Anti-forgery: is a request body genuinely Claude Code-shaped (pure)
+│   ├── transparentRelay.ts    ← Native forward: mirror client headers + Bearer, body verbatim
 │   ├── query.ts               ← SDK query options builder (shared between stream/non-stream paths)
 │   ├── errors.ts              ← Error classification (SDK errors → HTTP responses)
 │   ├── models.ts              ← Model mapping, Claude executable resolution
@@ -151,15 +151,15 @@ Agent-specific behavior is isolated behind the `AgentAdapter` interface (`adapte
 
 ### Native Passthrough Mode (Experimental)
 
-Three new modules support native mode — forwarding requests directly to `api.anthropic.com` using Max OAuth credentials, bypassing the Agent SDK:
+Native forwarding relays a request directly to `api.anthropic.com` using Max OAuth credentials, bypassing the Agent SDK. A genuine Claude Code client already sends an authentic request (real `claude-cli/…` headers + `system` with `cache_control`); the only thing it lacks is OAuth auth. So Meridian mirrors the client's own headers, swaps in a Bearer token, and forwards the body verbatim — no fabricated fingerprint, no system rewriting.
 
-- **`relayMode.ts`** — Pure mode resolution: decides whether to relay based on adapter settings, environment (`MERIDIAN_NATIVE_FORWARD=1`), per-request headers (`x-meridian-mode`), and profile type (OAuth only). Validates eligibility.
-- **`claudeEnvelope.ts`** — Dynamic fingerprint capture: extracts and caches a genuine Claude Code fingerprint (version, compilation hash, runtime markers) to spoof in forwarded requests. If capture fails, degrades to SDK passthrough.
-- **`transparentRelay.ts`** — Direct forward: sends the request verbatim to Anthropic's endpoint with Bearer token auth, handles 401 refresh, and streams responses via SSE passthrough.
+- **`ccShape.ts`** — Pure anti-forgery detector: `isClaudeCodeShaped(body)` checks the system identity line + a quorum of PascalCase CC tool names. Used because adapter detection is header-spoofable.
+- **`relayMode.ts`** — Pure eligibility: `nativeEligible(...)` (server-side toggle / `MERIDIAN_NATIVE_FORWARD=1` / OAuth profile; a client may only opt OUT via `x-meridian-mode: sdk`, never opt in) and `applyRelayModeToPassthrough` (internal/passthrough override of the SDK path).
+- **`transparentRelay.ts`** — Direct forward: mirrors client headers (strips placeholder auth / hop-by-hop / `x-meridian-*`), injects Bearer + OAuth beta, forwards the body verbatim, handles 401 refresh, returns the upstream response (SSE or JSON) as-is.
 
-Four relay modes are supported: `auto` (heuristic), `internal` (force SDK), `passthrough` (force SDK passthrough), `native` (force native if eligible). Mode is resolved per-request and can be overridden per-adapter, environment, or request header.
+Enabled per-adapter via two `sdkFeatures` toggles: **`nativeForward`** (default OFF) and **`nativeBodyCheck`** (anti-forge, default ON). A non-CC body fails the check and falls through to the normal SDK path.
 
-**NOTE:** This is agent-specific behavior (OAuth passthrough is Max-only). Future work will move native mode configuration into an adapter method to decouple from `sdkFeatures.ts`.
+**NOTE:** Agent-specific behavior (OAuth forwarding is Max-only). Future work will move native configuration into an adapter method to decouple from `sdkFeatures.ts`.
 
 ### Remaining OpenCode-Specific Code (Not Yet in Adapter)
 

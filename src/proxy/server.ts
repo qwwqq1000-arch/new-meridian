@@ -78,9 +78,9 @@ import {
 
 import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession, getSessionByClaudeId } from "./session/cache"
 import { lookupSessionRecovery, listStoredSessions } from "./sessionStore"
-import { resolveRelayMode, shouldNativeForward, applyRelayModeToPassthrough } from "./relayMode"
+import { nativeEligible, applyRelayModeToPassthrough } from "./relayMode"
 import { forwardNative } from "./transparentRelay"
-import { getFingerprint } from "./claudeEnvelope"
+import { isClaudeCodeShaped } from "./ccShape"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -834,28 +834,29 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         return textPrompt!
       }
 
-      // Native passthrough (third mode): forward verbatim to api.anthropic.com,
-      // bypassing the Agent SDK. Gated by per-adapter relayMode + OAuth profile.
-      // `let` because a failed fingerprint capture degrades the mode to passthrough.
-      // IMPORTANT: must run BEFORE the passthrough computation so that a native
-      // fallback (relayMode = "passthrough") can influence the passthrough flag.
-      let relayMode = resolveRelayMode({
-        feature: getFeaturesForAdapter(adapter.name).relayMode,
+      // Native forwarding (third path): forward the request VERBATIM to
+      // api.anthropic.com, bypassing the Agent SDK. Server-side decision only —
+      // a client may opt OUT via `x-meridian-mode: sdk` but can never opt IN
+      // (otherwise any client could spend the operator's OAuth token by
+      // spoofing a header). Runs BEFORE the passthrough computation so an
+      // anti-forgery reject can fall through to the SDK path below.
+      if (nativeEligible({
+        featureNativeForward: sdkFeatures.nativeForward,
         envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
-        headerOverride: c.req.header("x-meridian-mode"),
-      })
-      if (shouldNativeForward(relayMode, profile.type)) {
-        const fingerprint = await getFingerprint()
-        if (fingerprint) {
+        clientForcedSdk: c.req.header("x-meridian-mode") === "sdk",
+        profileType: profile.type,
+      })) {
+        // Anti-forgery: adapter detection is header-spoofable, so only forward
+        // requests whose body genuinely looks like Claude Code. A non-CC body
+        // (which would risk the account if relayed under a CC fingerprint)
+        // falls through to the normal SDK path instead.
+        if (!sdkFeatures.nativeBodyCheck || isClaudeCodeShaped(body)) {
           const clientHeaders: Record<string, string> = {}
           c.req.raw.headers.forEach((v, k) => { clientHeaders[k] = v })
           claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
-          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env }, fingerprint })
+          return await forwardNative({ body, clientHeaders, profile: { type: profile.type, env: profile.env } })
         }
-        // No real fingerprint available → never forward with a guessed one.
-        // Degrade to the existing SDK passthrough mode.
-        claudeLog("relay.native_fallback_passthrough", { adapter: adapter.name, profile: profile.id })
-        relayMode = "passthrough"
+        claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
       }
 
       // --- Passthrough mode ---
@@ -868,7 +869,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       const pipelinePassthrough = pipelineCtx.passthrough !== undefined
         ? pipelineCtx.passthrough
         : envBool("PASSTHROUGH")
-      const passthrough = applyRelayModeToPassthrough(relayMode, pipelinePassthrough)
+      const passthrough = applyRelayModeToPassthrough(sdkFeatures.relayMode, pipelinePassthrough)
       // SDK setting sources — controls CLAUDE.md and user settings loading.
       const settingSources: import("@anthropic-ai/claude-agent-sdk").SettingSource[] =
         envBool("LOAD_CONTEXT") || sdkFeatures.claudeMd === "full"
