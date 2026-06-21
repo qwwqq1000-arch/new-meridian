@@ -101,23 +101,29 @@ var QWIN=${JSON.stringify(WINDOW_LABELS)};
 function qLabel(t){if(QWIN[t])return QWIN[t];return String(t).split('_').map(function(p){return p?p[0].toUpperCase()+p.slice(1):p}).join(' ');}
 function qReset(r){if(r==null||!isFinite(r))return'';var ms=r-Date.now();if(ms<=0)return'resetting';var m=Math.floor(ms/60000),h=Math.floor(m/60),d=Math.floor(h/24);if(d>0)return'resets '+d+'d '+(h%24)+'h';if(h>0)return'resets '+h+'h '+(m%60)+'m';return'resets '+m+'m';}
 
+function renderNeedKey(){
+  document.getElementById('content').innerHTML='<div style="padding:48px 24px;text-align:center"><div style="font-size:16px;color:var(--text);margin-bottom:10px">🔑 需要 API Key</div><div style="font-size:13px;color:var(--muted);line-height:1.7">在网址后加 <code style="color:var(--accent)">?key=&lt;你的 API_KEY&gt;</code> 再访问。<br>例如 <code style="color:var(--accent)">http://'+location.host+'/?key=sk-mrd-...</code></div></div>';
+}
 async function refresh(){
   try{
-    const [health,stats,quota]=await Promise.all([
-      fetch('/health').then(r=>r.json()),
-      fetch('/telemetry/summary?window=86400000').then(r=>r.json()),
-      fetch('/v1/usage/quota/all').then(r=>r.ok?r.json():null).catch(function(){return null;})
-    ]);
+    const hr=await fetch('/health');
+    const sr=await fetch('/telemetry/summary?window=86400000');
+    if(hr.status===401||sr.status===401){renderNeedKey();return;}
+    const health=hr.ok?await hr.json():{};
+    const stats=sr.ok?await sr.json():{};
+    const quota=await fetch('/v1/usage/quota/all').then(r=>r.ok?r.json():null).catch(function(){return null;});
     render(health,stats,quota);
   }catch(e){document.getElementById('content').innerHTML='<div style="color:var(--red);padding:40px;text-align:center">Could not connect</div>'}
 }
 
 function render(h,s,q){
+  h=h||{};s=s||{};
   const st=h.status||'unknown',dot=st==='healthy'?'healthy':st==='degraded'?'degraded':'unhealthy';
   let o='';
   o+='<div class="status-banner"><div class="status-dot '+dot+'"></div><span class="status-text">'+(st==='healthy'?'Operational':st==='degraded'?'Degraded':'Offline')+'</span><span class="status-detail">Port '+location.port+' \u00b7 '+(h.mode||'internal')+' mode</span></div>';
-  const er=s.totalRequests>0?((s.errorCount/s.totalRequests)*100).toFixed(1):'0';
-  o+='<div class="grid">'+card('Requests (24h)',s.totalRequests,'','violet')+card('Median Response',ms(s.totalDuration?.p50),'p95: '+ms(s.totalDuration?.p95),'')+card('Median TTFB',ms(s.ttfb?.p50),'p95: '+ms(s.ttfb?.p95),'')+card('Error Rate',er+'%',s.errorCount+' errors',parseFloat(er)>5?'':'green')+'</div>';
+  const tr=s.totalRequests||0,ec=s.errorCount||0;
+  const er=tr>0?((ec/tr)*100).toFixed(1):'0';
+  o+='<div class="grid">'+card('Requests (24h)',tr,'','violet')+card('Median Response',ms(s.totalDuration?.p50),'p95: '+ms(s.totalDuration?.p95),'')+card('Median TTFB',ms(s.ttfb?.p50),'p95: '+ms(s.ttfb?.p95),'')+card('Error Rate',er+'%',ec+' errors',parseFloat(er)>5?'':'green')+'</div>';
   o+='<div class="section"><div class="section-title">Account</div>';
   if(h.auth?.loggedIn){o+='<div class="info-grid"><span class="info-label">Email</span><span class="info-value">'+(h.auth.email||'\u2014')+'</span><span class="info-label">Subscription</span><span class="info-value">'+(h.auth.subscriptionType||'\u2014')+'</span><span class="info-label">Mode</span><span class="info-value">'+(h.mode||'internal')+'</span><span class="info-label">Endpoint</span><span class="info-value">http://'+location.host+'</span></div>'}
   else{o+='<div class="info-grid"><span class="info-label">Status</span><span class="info-value" style="color:var(--yellow)">'+(h.error||'Not authenticated')+'</span></div>';
