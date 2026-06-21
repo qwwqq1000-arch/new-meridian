@@ -18,7 +18,7 @@ export async function forwardToNative(input: {
    */
   anthropicBeta?: string
   fetchImpl?: FetchLike
-}): Promise<{ degraded: boolean; reason?: string; response?: Response }> {
+}): Promise<{ degraded: boolean; reason?: string; response?: Response; connectionFailed?: boolean }> {
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as FetchLike)
   try {
     const res = await fetchImpl(`${input.baseUrl}/relay`, {
@@ -37,6 +37,9 @@ export async function forwardToNative(input: {
     }
     return { degraded: false, response: res }
   } catch (err) {
-    return { degraded: true, reason: err instanceof Error ? err.message : "connection_error" }
+    // Couldn't reach the sidecar at all — this (and only this) is a genuine
+    // "sidecar down" signal that should count toward the circuit breaker. A
+    // relay degrade (X-Degrade above) means the sidecar IS up and responded.
+    return { degraded: true, reason: err instanceof Error ? err.message : "connection_error", connectionFailed: true }
   }
 }

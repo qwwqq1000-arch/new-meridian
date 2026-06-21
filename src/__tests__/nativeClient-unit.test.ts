@@ -7,6 +7,7 @@ describe("forwardToNative", () => {
     const r = await forwardToNative({ baseUrl: "http://127.0.0.1:9", rawBody: "{}", profile: { configDir: "/c", account: "a" }, stream: false, fetchImpl })
     expect(r.degraded).toBe(true)
     expect(r.reason).toBe("no_fingerprint")
+    expect(r.connectionFailed).toBeFalsy() // sidecar responded → must NOT trip the breaker
   })
   it("returns the response when not degraded", async () => {
     const fetchImpl = async () => new Response(JSON.stringify({ ok: true }), { status: 200 })
@@ -18,6 +19,7 @@ describe("forwardToNative", () => {
     const fetchImpl = async () => { throw new Error("ECONNREFUSED") }
     const r = await forwardToNative({ baseUrl: "http://127.0.0.1:9", rawBody: "{}", profile: { configDir: "/c", account: "a" }, stream: false, fetchImpl })
     expect(r.degraded).toBe(true)
+    expect(r.connectionFailed).toBe(true) // sidecar unreachable → trips the breaker
   })
   it("sends the rawBody verbatim as the POST body with metadata in headers", async () => {
     let sentBody: unknown, sentHeaders: Record<string, string> = {}
