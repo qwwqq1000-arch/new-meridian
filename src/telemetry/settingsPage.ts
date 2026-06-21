@@ -114,7 +114,8 @@ ${profileBarHtml}
 
 <script>
 const FEATURES = [
-  { key: 'relayMode', label: 'Relay Mode', desc: 'auto: default — internal: MCP tools — passthrough: SDK passthrough — native: direct forward to api.anthropic.com (bypasses SDK; higher risk on non-Claude-Code clients)', type: 'select', options: ['auto', 'internal', 'passthrough', 'native'] },
+  { key: 'nativeForward', label: 'Native Forwarding', desc: 'Forward requests routed to this adapter VERBATIM to api.anthropic.com using your OAuth token, bypassing the SDK (no tool re-wrapping, no injected prompts). Intended for the Claude Code adapter — higher risk on non-CC adapters.', type: 'toggle' },
+  { key: 'nativeBodyCheck', label: 'Native: Anti-Forge Body Check', desc: 'Only forward natively when the request body genuinely looks like Claude Code (CC identity + CC tools). Blocks a client that spoofed CC detection headers from spending your OAuth token / risking the account. Keep ON.', type: 'toggle' },
   { key: 'codeSystemPrompt', label: 'Claude Code Prompt', desc: 'Include the built-in Claude Code system prompt (tool usage rules, safety guidelines, coding best practices)', type: 'toggle' },
   { key: 'clientSystemPrompt', label: 'Client Prompt', desc: 'Include the system prompt sent by the connecting agent (e.g. OpenCode or Crush instructions)', type: 'toggle' },
   { key: 'claudeMd', label: 'CLAUDE.md', desc: 'Load CLAUDE.md instruction files — Off: none, Project: ./CLAUDE.md only, Full: ~/.claude/CLAUDE.md + ./CLAUDE.md', type: 'select', options: ['off', 'project', 'full'] },
@@ -148,8 +149,8 @@ async function loadConfig() {
 }
 
 async function saveFeature(adapter, key, value) {
-  if (key === 'relayMode' && value === 'native' && adapter !== 'claude-code') {
-    const ok = confirm('Native mode forwards requests directly to api.anthropic.com using your OAuth token, bypassing the SDK. On non-Claude-Code clients the tool/prompt shape differs from the real CLI, which carries a HIGHER risk of your account being flagged. Enable anyway?');
+  if (key === 'nativeForward' && value === true && adapter !== 'claude-code') {
+    const ok = confirm('Native forwarding sends requests directly to api.anthropic.com using your OAuth token, bypassing the SDK. On non-Claude-Code adapters the tool/prompt shape differs from the real CLI, which carries a HIGHER risk of your account being flagged. Enable anyway?');
     if (!ok) { render(); return; }
   }
   const patch = {};
@@ -180,7 +181,7 @@ function hasAnyEnabled(features) {
          features.thinking !== 'disabled' || features.thinkingPassthrough ||
          features.sharedMemory || features.maxBudgetUsd > 0 ||
          features.fallbackModel || features.sdkDebug ||
-         features.additionalDirectories;
+         features.additionalDirectories || features.nativeForward;
 }
 
 function render() {

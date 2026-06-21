@@ -1,33 +1,31 @@
 import { describe, it, expect } from "bun:test"
-import { resolveRelayMode, shouldNativeForward } from "../proxy/relayMode"
+import { nativeEligible } from "../proxy/relayMode"
 
-describe("resolveRelayMode", () => {
-  it("returns the feature value when no override", () => {
-    expect(resolveRelayMode({ feature: "passthrough", envForceNative: false })).toBe("passthrough")
-  })
-  it("env force overrides the feature", () => {
-    expect(resolveRelayMode({ feature: "auto", envForceNative: true })).toBe("native")
-  })
-  it("header 'sdk' forces auto, beating env force", () => {
-    expect(resolveRelayMode({ feature: "native", envForceNative: true, headerOverride: "sdk" })).toBe("auto")
-  })
-  it("header 'native' forces native", () => {
-    expect(resolveRelayMode({ feature: "internal", envForceNative: false, headerOverride: "native" })).toBe("native")
-  })
-})
+const base = { featureNativeForward: false, envForceNative: false, clientForcedSdk: false, profileType: "claude-max" as const }
 
-describe("shouldNativeForward", () => {
-  it("true for native + claude-max", () => {
-    expect(shouldNativeForward("native", "claude-max")).toBe(true)
+describe("nativeEligible", () => {
+  it("true when the adapter toggle is on and the profile has OAuth", () => {
+    expect(nativeEligible({ ...base, featureNativeForward: true })).toBe(true)
   })
-  it("true for native + oauth-token", () => {
-    expect(shouldNativeForward("native", "oauth-token")).toBe(true)
+
+  it("true when the env escape hatch is set", () => {
+    expect(nativeEligible({ ...base, envForceNative: true })).toBe(true)
   })
-  it("false for native + api (no usable OAuth token)", () => {
-    expect(shouldNativeForward("native", "api")).toBe(false)
+
+  it("true for an oauth-token profile", () => {
+    expect(nativeEligible({ ...base, featureNativeForward: true, profileType: "oauth-token" })).toBe(true)
   })
-  it("false for non-native modes", () => {
-    expect(shouldNativeForward("passthrough", "claude-max")).toBe(false)
-    expect(shouldNativeForward("auto", "claude-max")).toBe(false)
+
+  it("false when neither toggle nor env is set (default off)", () => {
+    expect(nativeEligible(base)).toBe(false)
+  })
+
+  it("false for an api profile even when enabled (no usable OAuth token)", () => {
+    expect(nativeEligible({ ...base, featureNativeForward: true, profileType: "api" })).toBe(false)
+  })
+
+  it("client x-meridian-mode:sdk forces it OFF even when enabled server-side", () => {
+    expect(nativeEligible({ ...base, featureNativeForward: true, clientForcedSdk: true })).toBe(false)
+    expect(nativeEligible({ ...base, envForceNative: true, clientForcedSdk: true })).toBe(false)
   })
 })

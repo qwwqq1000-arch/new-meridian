@@ -1,35 +1,35 @@
 /**
- * Relay-mode resolution and eligibility. Pure leaf module — no I/O, no imports
- * from server.ts or session/.
+ * Relay-mode helpers. Pure leaf module — no I/O, no imports from server.ts or
+ * session/.
  *
- * Modes:
- *   auto        — existing behavior (transform pipeline decides internal vs passthrough)
- *   internal    — MCP tools, proxy executes (override pipeline passthrough=false)
- *   passthrough — SDK passthrough, client executes (override pipeline passthrough=true)
- *   native      — direct forward to api.anthropic.com, bypassing the Agent SDK
+ * Two concerns:
+ *   1. Native eligibility — whether to forward verbatim to api.anthropic.com,
+ *      bypassing the SDK. This is a SERVER-SIDE decision (per-adapter
+ *      `nativeForward` toggle or the MERIDIAN_NATIVE_FORWARD env). A client can
+ *      never ENABLE native; it may only DOWNGRADE to the SDK path via
+ *      `x-meridian-mode: sdk`. (Without this rule, any client could spend the
+ *      operator's OAuth token by spoofing a header.)
+ *   2. relayMode override — pin the SDK path to internal/passthrough.
  */
 
 export type RelayMode = "auto" | "internal" | "passthrough" | "native"
 
-export function resolveRelayMode(input: {
-  feature: RelayMode
+export function nativeEligible(input: {
+  /** The adapter's `nativeForward` feature toggle (server-side setting). */
+  featureNativeForward: boolean
+  /** MERIDIAN_NATIVE_FORWARD=1 (server-side operator escape hatch). */
   envForceNative: boolean
-  headerOverride?: string
-}): RelayMode {
-  if (input.headerOverride === "sdk") return "auto"
-  if (input.headerOverride === "native") return "native"
-  if (input.envForceNative) return "native"
-  return input.feature
+  /** Client sent `x-meridian-mode: sdk` to opt OUT of native. */
+  clientForcedSdk: boolean
+  profileType: "claude-max" | "api" | "oauth-token"
+}): boolean {
+  if (input.clientForcedSdk) return false
+  if (!(input.featureNativeForward || input.envForceNative)) return false
+  // Native needs a usable OAuth token; `api` profiles are a bare API key.
+  return input.profileType === "claude-max" || input.profileType === "oauth-token"
 }
 
-export function shouldNativeForward(
-  mode: RelayMode,
-  profileType: "claude-max" | "api" | "oauth-token",
-): boolean {
-  if (mode !== "native") return false
-  return profileType === "claude-max" || profileType === "oauth-token"
-}
-
+/** Apply an internal/passthrough relayMode override to the SDK-path passthrough flag. */
 export function applyRelayModeToPassthrough(mode: RelayMode, pipelinePassthrough: boolean): boolean {
   if (mode === "internal") return false
   if (mode === "passthrough") return true
