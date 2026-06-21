@@ -87,6 +87,8 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		// non-2xx → degrade so Node falls back to SDK
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+			logUpstreamError(resp.StatusCode, errBody)
 			degrade(w, fmt.Sprintf("upstream_%d", resp.StatusCode))
 			return
 		}

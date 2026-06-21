@@ -33,3 +33,12 @@ func logRelay(account string, headers http.Header, body []byte) {
 	fmt.Fprintf(os.Stderr, "[native-egress] relay account=%s headers=%v body=%s\n",
 		account, safe, body)
 }
+
+// logUpstreamError logs a non-2xx upstream response body (truncated) so native
+// failures (e.g. 400 invalid_request) are diagnosable. Gated like logRelay.
+func logUpstreamError(status int, body []byte) {
+	if v := os.Getenv("MERIDIAN_NATIVE_DEBUG"); v == "0" || v == "false" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[native-egress] upstream_non2xx status=%d body=%s\n", status, body)
+}
