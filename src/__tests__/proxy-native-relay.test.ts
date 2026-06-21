@@ -1,4 +1,5 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test"
+import { describe, it, expect, mock, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
+import { createServer, type Server } from "node:http"
 
 // Track whether the SDK was invoked (proves native bypassed it, or that a
 // degraded/rejected request fell through to the SDK). Declared before mock blocks
@@ -12,25 +13,62 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
 }))
 mock.module("../logger", () => ({ claudeLog: () => {}, withClaudeLogContext: (_c: unknown, fn: () => unknown) => fn() }))
 
-// Module-level toggle so individual tests can simulate a null (unavailable) base URL.
-let baseUrlNull = false
-mock.module("../proxy/nativeSupervisor", () => ({
-  CircuitBreaker: class {
-    isOpen() { return false }
-    recordFailure() {}
-    recordSuccess() {}
-  },
-  getNativeBaseUrl: () => baseUrlNull ? null : "http://127.0.0.1:65500",
-}))
+// ---------------------------------------------------------------------------
+// Fake sidecar — a real HTTP server so no mock.module leaks to other test files
+// ---------------------------------------------------------------------------
 
+/** Toggle: when true the fake sidecar responds with X-Degrade:1 */
 let degradeNext = false
-mock.module("../proxy/nativeClient", () => ({
-  forwardToNative: async () => degradeNext
-    ? { degraded: true, reason: "upstream_429" }
-    : { degraded: false, response: new Response(JSON.stringify({ relayed: true }), { status: 200 }) },
-}))
+
+let fakeSidecar: Server
+let fakeSidecarPort: number
+
+function startFakeSidecar(): Promise<void> {
+  return new Promise((resolve) => {
+    fakeSidecar = createServer((_req, res) => {
+      if (degradeNext) {
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "X-Degrade": "1",
+          "X-Degrade-Reason": "upstream_429",
+        })
+        res.end(JSON.stringify({}))
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ relayed: true }))
+      }
+    })
+    fakeSidecar.listen(0, "127.0.0.1", () => {
+      const addr = fakeSidecar.address()
+      fakeSidecarPort = typeof addr === "object" && addr !== null ? addr.port : 0
+      resolve()
+    })
+  })
+}
+
+function stopFakeSidecar(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fakeSidecar.close((err) => (err ? reject(err) : resolve()))
+  })
+}
+
+beforeAll(async () => {
+  await startFakeSidecar()
+})
+
+afterAll(async () => {
+  await stopFakeSidecar()
+})
+
+// ---------------------------------------------------------------------------
+// Import the server AFTER mocks are registered
+// ---------------------------------------------------------------------------
 
 const { createProxyServer, clearSessionCache } = await import("../proxy/server")
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
 
 const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 const ccShapedBody = {
@@ -48,19 +86,32 @@ function makeApp() {
   } as Parameters<typeof createProxyServer>[0]).app
 }
 
+// ---------------------------------------------------------------------------
+// Env bookkeeping
+// ---------------------------------------------------------------------------
+
+let savedForwardEnv: string | undefined
+let savedUrlEnv: string | undefined
+
 describe("native relay branch (Go sidecar delegation)", () => {
-  let savedEnv: string | undefined
   beforeEach(() => {
     clearSessionCache()
     sdkInvoked = false
     degradeNext = false
-    baseUrlNull = false
-    savedEnv = process.env.MERIDIAN_NATIVE_FORWARD
+
+    savedForwardEnv = process.env.MERIDIAN_NATIVE_FORWARD
+    savedUrlEnv = process.env.MERIDIAN_NATIVE_EGRESS_URL
+
     process.env.MERIDIAN_NATIVE_FORWARD = "1"
+    process.env.MERIDIAN_NATIVE_EGRESS_URL = `http://127.0.0.1:${fakeSidecarPort}`
   })
+
   afterEach(() => {
-    if (savedEnv === undefined) delete process.env.MERIDIAN_NATIVE_FORWARD
-    else process.env.MERIDIAN_NATIVE_FORWARD = savedEnv
+    if (savedForwardEnv === undefined) delete process.env.MERIDIAN_NATIVE_FORWARD
+    else process.env.MERIDIAN_NATIVE_FORWARD = savedForwardEnv
+
+    if (savedUrlEnv === undefined) delete process.env.MERIDIAN_NATIVE_EGRESS_URL
+    else process.env.MERIDIAN_NATIVE_EGRESS_URL = savedUrlEnv
   })
 
   it("(a) not-degraded: returns native response, SDK not invoked", async () => {
@@ -76,7 +127,7 @@ describe("native relay branch (Go sidecar delegation)", () => {
     expect(sdkInvoked).toBe(false)
   })
 
-  it("(b) degraded: SDK invoked (falls through to SDK path)", async () => {
+  it("(b) degraded (X-Degrade:1): SDK invoked (falls through to SDK path)", async () => {
     degradeNext = true
     const res = await makeApp().fetch(new Request("http://localhost/v1/messages", {
       method: "POST",
@@ -84,13 +135,13 @@ describe("native relay branch (Go sidecar delegation)", () => {
       body: JSON.stringify(ccShapedBody),
     }))
     expect(sdkInvoked).toBe(true)
-    // Response from SDK (not the native response)
     const j = await res.json().catch(() => ({})) as { relayed?: boolean }
     expect(j.relayed).toBeUndefined()
   })
 
-  it("(c) null baseUrl (sidecar unavailable): SDK invoked, not native response", async () => {
-    baseUrlNull = true
+  it("(c) sidecar unavailable (bad port): SDK invoked, not native response", async () => {
+    // Point at a port that is guaranteed to refuse connections
+    process.env.MERIDIAN_NATIVE_EGRESS_URL = "http://127.0.0.1:1"
     const res = await makeApp().fetch(new Request("http://localhost/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-meridian-profile": "p", "user-agent": "claude-cli/2.1.0" },

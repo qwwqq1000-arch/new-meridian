@@ -175,9 +175,16 @@ void _supervisor.start()
 
 /**
  * Returns the base URL of the running Go sidecar, or null if unavailable.
- * Exported as a function so tests can mock the entire nativeSupervisor module
- * and replace this with a stub without needing to control the singleton lifecycle.
+ *
+ * When `MERIDIAN_NATIVE_EGRESS_URL` is set to a non-empty string the singleton
+ * is bypassed entirely and that URL is returned directly. This lets tests (and
+ * operators pointing at an external sidecar) inject a known address without
+ * spawning a binary or mocking this module. The env var is also useful in
+ * production when the sidecar is managed outside of this process (e.g. a
+ * separate Docker side-container).
  */
 export function getNativeBaseUrl(): string | null {
+  const override = process.env["MERIDIAN_NATIVE_EGRESS_URL"]
+  if (override && override.length > 0) return override
   return _supervisor.baseUrl()
 }
