@@ -188,7 +188,7 @@ function renderGlobalNativeSection() {
           '<span class="feature-desc">Bypass SDK globally — forward all OAuth-capable requests verbatim to api.anthropic.com</span>' +
         '</div>' +
         '<label class="toggle"><input type="checkbox" id="global-nativeForward" ' + (globalNative.nativeForward ? 'checked' : '') +
-        ' onchange="saveGlobalNative(\'nativeForward\', this.checked)"><span class="toggle-track"></span></label>' +
+        ' onchange="saveGlobalNative(\\'nativeForward\\', this.checked)"><span class="toggle-track"></span></label>' +
       '</div>' +
       '<div class="feature-row">' +
         '<div class="feature-info">' +
@@ -196,7 +196,7 @@ function renderGlobalNativeSection() {
           '<span class="feature-desc">Only forward natively when the body looks like genuine Claude Code (CC identity + tools). Keep ON.</span>' +
         '</div>' +
         '<label class="toggle"><input type="checkbox" id="global-nativeBodyCheck" ' + (globalNative.nativeBodyCheck ? 'checked' : '') +
-        ' onchange="saveGlobalNative(\'nativeBodyCheck\', this.checked)"><span class="toggle-track"></span></label>' +
+        ' onchange="saveGlobalNative(\\'nativeBodyCheck\\', this.checked)"><span class="toggle-track"></span></label>' +
       '</div>' +
     '</div>';
   container.insertBefore(card, container.firstChild);
