@@ -18,6 +18,12 @@ const ClaudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Cl
 const ccIdentityPrefix = "You are Claude Code, Anthropic's official CLI for Claude"
 
 func CloakBody(raw []byte, userID string) ([]byte, error) {
+	// Applies to EVERY native path (genuine-CC verbatim AND the non-CC faking
+	// path): Anthropic rejects thinking together with a forced tool_choice (400).
+	// Surgical (sjson), a no-op unless tool_choice forces a tool — so a verbatim
+	// CC body is untouched otherwise.
+	raw = disableThinkingIfToolChoiceForced(raw)
+
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, err
@@ -30,14 +36,9 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	// already CC-shaped. The transforms below exist only to fake a non-CC body
 	// as CC on the body-check-off path.
 	if hasClaudeIdentity(body["system"]) {
-		// Genuine CC: forward verbatim, with two surgical (sjson) exceptions that
-		// keep Anthropic from 400ing — neither touches thinking-block signatures:
-		//   1. tool_choice forcing a tool is incompatible with thinking config.
-		//   2. add a default 5m cache breakpoint only when none was sent (a
-		//      client-supplied ttl:1h is preserved as-is).
-		out := disableThinkingIfToolChoiceForced(raw)
-		out = ensureCacheControl5m(out)
-		return out, nil
+		// Add a default 5m cache breakpoint only when none was sent (a
+		// client-supplied ttl:1h is preserved as-is). Surgical — signatures hold.
+		return ensureCacheControl5m(raw), nil
 	}
 	body["system"] = normalizeSystem(body["system"])
 	sanitizeCacheTTL(body)

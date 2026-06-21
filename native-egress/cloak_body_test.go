@@ -98,6 +98,16 @@ func TestCloakBodyDropsThinkingWhenToolChoiceForced(t *testing.T) {
 	}
 }
 
+func TestCloakBodyDropsThinkingOnFakingPath(t *testing.T) {
+	// non-CC body (no CC identity) → faking path; thinking must still be dropped
+	// when tool_choice forces a tool (this is the structured-output case).
+	raw := []byte(`{"system":[{"type":"text","text":"You are a helper."}],"thinking":{"type":"enabled"},"tool_choice":{"type":"tool","name":"x"},"tools":[{"name":"x"}],"messages":[]}`)
+	out, _ := CloakBody(raw, "u")
+	if gjson.GetBytes(out, "thinking").Exists() {
+		t.Fatalf("thinking must be dropped on the faking path too: %s", out)
+	}
+}
+
 func TestCloakBodyKeepsThinkingWhenToolChoiceAuto(t *testing.T) {
 	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled"},"tool_choice":{"type":"auto"},"messages":[]}`)
 	out, _ := CloakBody(raw, "u")
