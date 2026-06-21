@@ -44,6 +44,9 @@ func writeTempCreds(t *testing.T, token string) string {
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
 func TestRelayDegradesWhenNoFingerprint(t *testing.T) {
+	// Use a real creds file so ReadToken succeeds; with an always-error FP fetcher,
+	// the handler must degrade at the fingerprint step — NOT at no_token.
+	dir := writeTempCreds(t, "tok-fp-test")
 	deps := RelayDeps{
 		Transport: rtFunc(func(*http.Request) (*http.Response, error) { t.Fatal("must not forward"); return nil, nil }),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
@@ -51,10 +54,13 @@ func TestRelayDegradesWhenNoFingerprint(t *testing.T) {
 		Now:       time.Now,
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/relay", bytes.NewReader(mustJSON(map[string]any{"configDir": "/x", "account": "a", "body": map[string]any{"messages": []any{}}})))
+	req := httptest.NewRequest("POST", "/relay", bytes.NewReader(mustJSON(map[string]any{"configDir": dir, "account": "a", "body": map[string]any{"messages": []any{}}})))
 	relayHandler(deps)(rec, req)
 	if rec.Header().Get("X-Degrade") != "1" {
-		t.Fatalf("expected degrade, got %d", rec.Code)
+		t.Fatalf("expected degrade, got code %d", rec.Code)
+	}
+	if rec.Header().Get("X-Degrade-Reason") != "no_fingerprint" {
+		t.Fatalf("expected no_fingerprint reason, got %q", rec.Header().Get("X-Degrade-Reason"))
 	}
 }
 

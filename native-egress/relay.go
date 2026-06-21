@@ -55,7 +55,11 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
-		rawBody, _ := json.Marshal(req.Body)
+		rawBody, err := json.Marshal(req.Body)
+		if err != nil {
+			degrade(w, "marshal_error")
+			return
+		}
 		cloaked, err := CloakBody(rawBody, "user_"+req.Account)
 		if err != nil {
 			degrade(w, "cloak_error")
@@ -64,7 +68,11 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		headers := BuildHeaders(fp, token, d.SessionID(req.Account), uuid.NewString(), req.Stream)
 
-		upReq, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
+		upReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
+		if err != nil {
+			degrade(w, "build_request_error")
+			return
+		}
 		upReq.Header = headers
 
 		logRelay(req.Account, headers, cloaked)
@@ -88,8 +96,20 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-		flush(w)
+		rc := http.NewResponseController(w)
+		buf := make([]byte, 16*1024)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					break
+				}
+				_ = rc.Flush()
+			}
+			if rerr != nil {
+				break
+			}
+		}
 	}
 }
 
@@ -106,11 +126,4 @@ func degrade(w http.ResponseWriter, reason string) {
 // bytesReader wraps a byte slice in an io.ReadCloser, reusing bytes.NewReader.
 func bytesReader(b []byte) io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(b))
-}
-
-// flush flushes the response writer if it implements http.Flusher (SSE streams).
-func flush(w http.ResponseWriter) {
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
 }
