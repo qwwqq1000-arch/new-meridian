@@ -1,6 +1,9 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 const ClaudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
 
@@ -30,9 +33,15 @@ func normalizeSystem(sys any) []any {
 	case string:
 		return []any{identity, map[string]any{"type": "text", "text": v}}
 	case []any:
-		if len(v) > 0 {
-			if b, ok := v[0].(map[string]any); ok && b["text"] == ClaudeCodeIdentity {
-				return v
+		// Genuine Claude Code may carry the identity in a non-first block (recent
+		// CLI prepends a `x-anthropic-billing-header` block). If ANY block already
+		// bears the identity, forward verbatim — prepending a duplicate would be a
+		// forgery tell. Only inject when the identity is absent entirely.
+		for _, item := range v {
+			if b, ok := item.(map[string]any); ok {
+				if text, ok := b["text"].(string); ok && strings.HasPrefix(strings.TrimLeft(text, " \t\r\n"), ClaudeCodeIdentity) {
+					return v
+				}
 			}
 		}
 		return append([]any{identity}, v...)

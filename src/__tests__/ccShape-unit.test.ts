@@ -13,6 +13,14 @@ describe("isClaudeCodeShaped", () => {
     expect(isClaudeCodeShaped({ system: `${CC_IDENTITY} extra`, tools: ccTools })).toBe(true)
   })
 
+  it("accepts when the CC identity is not the first block (genuine CC prepends a billing-header block)", () => {
+    const realCcSystem = [
+      { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.148.902; cc_entrypoint=cli" },
+      { type: "text", text: `${CC_IDENTITY}\n\nYou are an interactive CLI tool...` },
+    ]
+    expect(isClaudeCodeShaped({ system: realCcSystem, tools: ccTools })).toBe(true)
+  })
+
   it("rejects an OpenCode-shaped request (lowercase tool names miss the PascalCase quorum)", () => {
     const ocTools = ["read", "write", "edit", "bash", "glob", "grep"].map(name => ({ name }))
     expect(isClaudeCodeShaped({ system: ccSystem, tools: ocTools })).toBe(false)

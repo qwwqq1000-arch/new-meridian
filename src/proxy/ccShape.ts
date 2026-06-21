@@ -34,23 +34,25 @@ const CC_QUORUM_TOOLS = new Set([
 
 const DEFAULT_MIN_TOOLS = 4
 
-/** Extract the first system text block's text, or "" if none. */
-function firstSystemText(system: unknown): string {
-  if (typeof system === "string") return system
+/** All system text-block strings, in order. (string system → single element) */
+function systemTexts(system: unknown): string[] {
+  if (typeof system === "string") return [system]
   if (Array.isArray(system)) {
+    const out: string[] = []
     for (const b of system) {
       if (b && typeof b === "object" && (b as { type?: unknown }).type === "text") {
         const text = (b as { text?: unknown }).text
-        if (typeof text === "string") return text
+        if (typeof text === "string") out.push(text)
       }
     }
+    return out
   }
-  return ""
+  return []
 }
 
 export interface CcShapeReport {
   ok: boolean
-  /** First system text block starts with the CC identity line. */
+  /** Some system text block starts with the CC identity line. */
   identityOk: boolean
   /** How many of the request's tools are CC PascalCase quorum tools. */
   toolHits: number
@@ -74,8 +76,11 @@ export function inspectClaudeCodeShape(body: unknown, opts?: { minTools?: number
   if (!body || typeof body !== "object") return empty
   const b = body as { system?: unknown; tools?: unknown }
 
-  const sysText = firstSystemText(b.system)
-  const identityOk = sysText.trimStart().startsWith(CC_IDENTITY)
+  // Genuine Claude Code does not always put the identity first — recent CLI
+  // versions emit a `x-anthropic-billing-header: cc_version=…` system block
+  // ahead of it. Scan ALL system text blocks, not just the first.
+  const texts = systemTexts(b.system)
+  const identityOk = texts.some((t) => t.trimStart().startsWith(CC_IDENTITY))
 
   const tools = Array.isArray(b.tools) ? b.tools : []
   const names: string[] = []
@@ -94,7 +99,7 @@ export function inspectClaudeCodeShape(body: unknown, opts?: { minTools?: number
     toolHits,
     toolCount: tools.length,
     minTools,
-    systemPrefix: sysText.slice(0, 60),
+    systemPrefix: (texts[0] ?? "").slice(0, 60),
     sampleTools: names.slice(0, 8),
   }
 }
