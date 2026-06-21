@@ -93,7 +93,7 @@ func defaultCapture(claudePath, configDir string) func(string) (string, error) {
 	return func(string) (string, error) {
 		cmd := exec.Command(claudePath, "-p", "hi")
 		cmd.Env = append(append([]string{}, osEnviron()...),
-			"ANTHROPIC_LOG=debug", "CLAUDE_CONFIG_DIR="+configDir)
+			"ANTHROPIC_LOG=debug", "CLAUDE_CONFIG_DIR="+resolveConfigDir(configDir))
 		out, _ := cmd.CombinedOutput() // headers are logged before any non-2xx; ignore exit code
 		return string(out), nil
 	}

@@ -11,6 +11,21 @@ import (
 const oauthTokenURL = "https://platform.claude.com/v1/oauth/token"
 const oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
+// resolveConfigDir returns configDir if non-empty, else defaults to
+// $CLAUDE_CONFIG_DIR if set, else $HOME/.claude, else .claude.
+func resolveConfigDir(configDir string) string {
+	if configDir != "" {
+		return configDir
+	}
+	if c := os.Getenv("CLAUDE_CONFIG_DIR"); c != "" {
+		return c
+	}
+	if h := os.Getenv("HOME"); h != "" {
+		return filepath.Join(h, ".claude")
+	}
+	return ".claude"
+}
+
 type credsFile struct {
 	ClaudeAiOauth struct {
 		AccessToken  string `json:"accessToken"`
@@ -20,6 +35,7 @@ type credsFile struct {
 }
 
 func ReadToken(configDir string) (string, string, int64, error) {
+	configDir = resolveConfigDir(configDir)
 	b, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
 	if err != nil {
 		return "", "", 0, err
