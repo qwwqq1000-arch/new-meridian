@@ -65,6 +65,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 const { createProxyServer, clearSessionCache } = await import("../proxy/server")
+const { setSetting } = await import("../proxy/settings")
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -169,5 +170,25 @@ describe("native relay branch (Go sidecar delegation)", () => {
     expect(sdkInvoked).toBe(true)
     const j = await res.json().catch(() => ({})) as { relayed?: boolean }
     expect(j.relayed).toBeUndefined()
+  })
+
+  it("(e) global nativeForward=true enables native (no env var)", async () => {
+    // Remove the env var that existing tests rely on, use global setting instead
+    delete process.env.MERIDIAN_NATIVE_FORWARD
+    setSetting("nativeForward", true)
+    try {
+      const res = await makeApp().fetch(new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-meridian-profile": "p", "user-agent": "claude-cli/2.1.0" },
+        body: JSON.stringify(ccShapedBody),
+      }))
+      expect(res.status).toBe(200)
+      const j = await res.json() as { relayed?: boolean }
+      expect(j.relayed).toBe(true)
+      expect(sdkInvoked).toBe(false)
+    } finally {
+      setSetting("nativeForward", false)
+      process.env.MERIDIAN_NATIVE_FORWARD = "1"  // restore for other tests in the suite
+    }
   })
 })

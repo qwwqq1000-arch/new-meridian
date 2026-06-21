@@ -52,3 +52,28 @@ describe("settings module contract", () => {
     }).not.toThrow()
   })
 })
+
+describe("MeridianSettings new fields — nativeForward, nativeBodyCheck", () => {
+  test("nativeForward defaults to undefined (treated as false)", () => {
+    // The interface is typed as optional; absent key means feature is off.
+    const s: import("../proxy/settings").MeridianSettings = {}
+    expect(s.nativeForward).toBeUndefined()
+    // Absent = falsy = disabled
+    expect(s.nativeForward === true).toBe(false)
+  })
+
+  test("nativeBodyCheck defaults to undefined (treated as true / gate ON)", () => {
+    const s: import("../proxy/settings").MeridianSettings = {}
+    expect(s.nativeBodyCheck).toBeUndefined()
+    // The consumer uses `getSetting("nativeBodyCheck") !== false`, so undefined ≠ false → gate stays ON
+    expect(s.nativeBodyCheck !== false).toBe(true)
+  })
+
+  test("JSON roundtrip preserves nativeForward=true", () => {
+    const data = { activeProfile: "work", nativeForward: true, nativeBodyCheck: false }
+    const serialized = JSON.stringify(data, null, 2)
+    const parsed = JSON.parse(serialized) as import("../proxy/settings").MeridianSettings
+    expect(parsed.nativeForward).toBe(true)
+    expect(parsed.nativeBodyCheck).toBe(false)
+  })
+})

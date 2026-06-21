@@ -845,8 +845,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // (otherwise any client could spend the operator's OAuth token by
       // spoofing a header). Runs BEFORE the passthrough computation so an
       // anti-forgery reject can fall through to the SDK path below.
+      const { getSetting: getNativeSetting } = require("./settings") as typeof import("./settings")
       if (nativeEligible({
-        featureNativeForward: sdkFeatures.nativeForward,
+        featureNativeForward: getNativeSetting("nativeForward") === true || sdkFeatures.nativeForward,
         envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
         clientForcedSdk: c.req.header("x-meridian-mode") === "sdk",
         profileType: profile.type,
@@ -855,11 +856,13 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // requests whose body genuinely looks like Claude Code. A non-CC body
         // (which would risk the account if relayed under a CC fingerprint)
         // falls through to the normal SDK path instead.
-        if (!sdkFeatures.nativeBodyCheck || isClaudeCodeShaped(body)) {
+        const globalBodyCheck = getNativeSetting("nativeBodyCheck") !== false
+        if (!globalBodyCheck || isClaudeCodeShaped(body)) {
           const nativeBaseUrl = getNativeBaseUrl()
           if (nativeBaseUrl === null || nativeCb.isOpen(Date.now())) {
             // Sidecar unavailable or circuit open — degrade to SDK path
             claudeLog("relay.native_degrade", { reason: "sidecar_unavailable", adapter: adapter.name, profile: profile.id })
+            diagnosticLog.session(`${requestMeta.requestId} relay=degrade:sidecar_unavailable`, requestMeta.requestId)
           } else {
             const configDir = profile.env.CLAUDE_CONFIG_DIR ?? ""
             const r = await forwardToNative({
@@ -871,6 +874,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
             if (r.degraded) {
               nativeCb.recordFailure(Date.now())
               claudeLog("relay.native_degrade", { reason: r.reason ?? "unknown", adapter: adapter.name, profile: profile.id })
+              diagnosticLog.session(`${requestMeta.requestId} relay=degrade:${r.reason ?? "unknown"}`, requestMeta.requestId)
               telemetryStore.record({
                 requestId: requestMeta.requestId,
                 timestamp: Date.now(),
@@ -901,6 +905,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
             } else {
               nativeCb.recordSuccess()
               claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
+              diagnosticLog.session(`${requestMeta.requestId} relay=native`, requestMeta.requestId)
               telemetryStore.record({
                 requestId: requestMeta.requestId,
                 timestamp: Date.now(),
@@ -932,6 +937,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           }
         } else {
           claudeLog("relay.native_reject_noncc_shape", { adapter: adapter.name, profile: profile.id })
+          diagnosticLog.session(`${requestMeta.requestId} relay=reject:noncc`, requestMeta.requestId)
         }
       }
 
@@ -2570,6 +2576,41 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     const { resetAdapterFeatures } = require("./sdkFeatures") as typeof import("./sdkFeatures")
     const adapter = c.req.param("adapter")
     resetAdapterFeatures(adapter)
+    return c.json({ ok: true })
+  })
+
+  // Global native-forwarding settings
+  app.get("/settings/api/native", (c) => {
+    const { getSetting } = require("./settings") as typeof import("./settings")
+    return c.json({
+      nativeForward: getSetting("nativeForward") === true,
+      nativeBodyCheck: getSetting("nativeBodyCheck") !== false,
+    })
+  })
+  app.patch("/settings/api/native", async (c) => {
+    const { setSetting } = require("./settings") as typeof import("./settings")
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400)
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "body must be a JSON object" }, 400)
+    }
+    const input = body as Record<string, unknown>
+    if ("nativeForward" in input) {
+      if (typeof input.nativeForward !== "boolean") {
+        return c.json({ error: "nativeForward must be a boolean" }, 400)
+      }
+      setSetting("nativeForward", input.nativeForward)
+    }
+    if ("nativeBodyCheck" in input) {
+      if (typeof input.nativeBodyCheck !== "boolean") {
+        return c.json({ error: "nativeBodyCheck must be a boolean" }, 400)
+      }
+      setSetting("nativeBodyCheck", input.nativeBodyCheck)
+    }
     return c.json({ ok: true })
   })
 
