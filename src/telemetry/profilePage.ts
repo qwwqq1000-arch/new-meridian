@@ -139,7 +139,7 @@ export const profilePageHtml = `<!DOCTYPE html>
 <script>${KEY_BOOTSTRAP}</script>
 ` + profileBarHtml + `
 <div class="container">
-<h1>Profiles</h1>
+<h1>Profiles <button id="quota-btn" onclick="fetchQuota()" style="margin-left:10px;font-size:12px;padding:4px 12px;border:1px solid var(--accent,#8B7CF6);background:transparent;color:var(--accent,#8B7CF6);border-radius:6px;cursor:pointer;vertical-align:middle">🔄 刷新额度</button></h1>
 <div class="subtitle">Manage Claude account profiles</div>
 
 <div id="content"><div style="color:var(--muted);padding:40px;text-align:center">Loading\u2026</div></div>
@@ -242,20 +242,26 @@ var lastQuota = null;
 
 async function refresh() {
   try {
+    // Profiles list only — quota (/v1/usage/quota/all hits Anthropic) is NOT
+    // fetched here. It loads ONLY when the user clicks 刷新额度 (fetchQuota).
+    var profilesRes = await fetch('/profiles/list');
+    var profiles = await profilesRes.json();
+    render(profiles, lastQuota);
+  } catch {
+    document.getElementById('content').innerHTML = '<div class="empty-state"><h2>Could not load profiles</h2><p>Is Meridian running?</p></div>';
+  }
+}
+async function fetchQuota() {
+  var btn = document.getElementById('quota-btn'); if (btn) { btn.textContent = '刷新中…'; btn.disabled = true; }
+  try {
     var [profilesRes, quotaRes] = await Promise.all([
       fetch('/profiles/list'),
       fetch('/v1/usage/quota/all').catch(function () { return null; }),
     ]);
     var profiles = await profilesRes.json();
-    var quota = null;
-    if (quotaRes && quotaRes.ok) {
-      try { quota = await quotaRes.json(); } catch (_) { quota = null; }
-    }
-    if (quota) lastQuota = quota;
+    if (quotaRes && quotaRes.ok) { try { lastQuota = await quotaRes.json(); } catch (_) {} }
     render(profiles, lastQuota);
-  } catch {
-    document.getElementById('content').innerHTML = '<div class="empty-state"><h2>Could not load profiles</h2><p>Is Meridian running?</p></div>';
-  }
+  } catch {}
 }
 
 function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -440,8 +446,7 @@ async function switchProfile(id) {
   if (data.success) refresh();
 }
 
-refresh();
-setInterval(refresh, 10000);
+refresh(); // initial profiles list only — no auto-refresh, quota is manual (刷新额度)
 ` + profileBarJs + `
 </script>
 </body>
