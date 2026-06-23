@@ -174,6 +174,19 @@ const _supervisor = new NativeSupervisor()
 void _supervisor.start()
 
 /**
+ * Restart the native-egress sidecar so it re-inherits the current process env
+ * (notably all_proxy/ALL_PROXY). Called after the egress proxy changes at
+ * runtime — the already-spawned Go child holds a frozen env snapshot, so a
+ * restart is required for a newly-saved proxy to take effect.
+ */
+export function restartNativeSupervisor(): void {
+  try {
+    _supervisor.stop()
+  } catch {}
+  void _supervisor.start()
+}
+
+/**
  * Returns the base URL of the running Go sidecar, or null if unavailable.
  *
  * When `MERIDIAN_NATIVE_EGRESS_URL` is set to a non-empty string the singleton

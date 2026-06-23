@@ -7,7 +7,17 @@ import (
 
 	tls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
+	"golang.org/x/net/proxy"
 )
+
+// dialUpstream connects to addr, honouring an egress proxy configured via the
+// standard all_proxy / ALL_PROXY environment variable. proxy.FromEnvironment
+// understands socks5:// (with user:pass) and http(s):// proxies and returns a
+// direct dialer when none is set — so this transparently routes ALL native
+// egress through the operator's proxy when one is configured.
+func dialUpstream(addr string) (net.Conn, error) {
+	return proxy.FromEnvironment().Dial("tcp", addr)
+}
 
 type utlsRoundTripper struct {
 	mu    sync.Mutex
@@ -31,7 +41,7 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 	t.mu.Unlock()
 
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialUpstream(addr)
 	if err != nil {
 		return nil, err
 	}

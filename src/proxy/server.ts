@@ -2660,6 +2660,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   app.post("/settings/api/proxy", async (c) => {
     const { setSetting } = require("./settings") as typeof import("./settings")
     const { parseProxy, applyProxyEnv } = require("./egressProxy") as typeof import("./egressProxy")
+    const { restartNativeSupervisor } = require("./nativeSupervisor") as typeof import("./nativeSupervisor")
     let body: { raw?: string }
     try {
       body = await c.req.json()
@@ -2670,12 +2671,14 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     if (!raw) {
       setSetting("egressProxy", "")
       applyProxyEnv(undefined)
+      restartNativeSupervisor() // sidecar re-inherits env (now without a proxy)
       return c.json({ ok: true, proxy: "", parsed: null })
     }
     const parsed = parseProxy(raw)
     if (!parsed) return c.json({ error: "could not parse proxy (expected scheme://host:port:user:pass)" }, 400)
     setSetting("egressProxy", parsed.url)
     applyProxyEnv(parsed.url)
+    restartNativeSupervisor() // sidecar re-inherits env so the new proxy takes effect
     return c.json({ ok: true, proxy: parsed.url, parsed })
   })
 
