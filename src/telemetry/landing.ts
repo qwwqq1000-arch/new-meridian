@@ -104,16 +104,30 @@ function qReset(r){if(r==null||!isFinite(r))return'';var ms=r-Date.now();if(ms<=
 function renderNeedKey(){
   document.getElementById('content').innerHTML='<div style="padding:48px 24px;text-align:center"><div style="font-size:16px;color:var(--text);margin-bottom:10px">🔑 需要 API Key</div><div style="font-size:13px;color:var(--muted);line-height:1.7">在网址后加 <code style="color:var(--accent)">?key=&lt;你的 API_KEY&gt;</code> 再访问。<br>例如 <code style="color:var(--accent)">http://'+location.host+'/?key=sk-mrd-...</code></div></div>';
 }
+var lastHealth=null,lastStats=null,lastQuota=null;
+// Initial render only — NO auto-refresh (no setInterval). quota is never fetched
+// here; it (and a fresh health/stats) load ONLY when the user clicks 刷新.
 async function refresh(){
   try{
     const hr=await fetch('/health');
     const sr=await fetch('/telemetry/summary?window=86400000');
     if(hr.status===401||sr.status===401){renderNeedKey();return;}
-    const health=hr.ok?await hr.json():{};
-    const stats=sr.ok?await sr.json():{};
-    const quota=await fetch('/v1/usage/quota/all').then(r=>r.ok?r.json():null).catch(function(){return null;});
-    render(health,stats,quota);
+    lastHealth=hr.ok?await hr.json():{};
+    lastStats=sr.ok?await sr.json():{};
+    render(lastHealth,lastStats,lastQuota);
   }catch(e){document.getElementById('content').innerHTML='<div style="color:var(--red);padding:40px;text-align:center">Could not connect</div>'}
+}
+// Manual full refresh (health + stats + quota). Quota hits Anthropic's usage
+// endpoint, so it is fetched ONLY on this explicit click — never automatically.
+async function fetchQuota(){
+  var btn=document.getElementById('quota-btn');if(btn){btn.textContent='刷新中…';btn.disabled=true;}
+  try{
+    const hr=await fetch('/health');const sr=await fetch('/telemetry/summary?window=86400000');
+    if(hr.ok)lastHealth=await hr.json();
+    if(sr.ok)lastStats=await sr.json();
+    lastQuota=await fetch('/v1/usage/quota/all').then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});
+  }catch(e){}
+  render(lastHealth||{},lastStats||{},lastQuota);
 }
 
 function render(h,s,q){
@@ -135,8 +149,8 @@ function render(h,s,q){
   o+='</div>';
   var qp=(q&&q.profiles&&q.profiles.length)?q.profiles[0]:null;
   var qwin=qp&&qp.windows?qp.windows:[];
+  o+='<div class="section"><div class="section-title">Rate Limits 限额 <button id="quota-btn" onclick="fetchQuota()" style="margin-left:8px;font-size:11px;padding:3px 12px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;vertical-align:middle">🔄 刷新额度</button></div>';
   if(qwin.length){
-    o+='<div class="section"><div class="section-title">Rate Limits 限额</div>';
     qwin.forEach(function(w){
       var u=(w.utilization!=null&&isFinite(w.utilization))?Math.max(0,Math.min(1,w.utilization)):null;
       var pct=u==null?'—':Math.round(u*100)+'%';
@@ -144,12 +158,12 @@ function render(h,s,q){
       var rs=qReset(w.resetsAt);
       o+='<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px"><span>'+qLabel(w.type)+(rs?' <span style="color:var(--muted)">· '+rs+'</span>':'')+'</span><span style="font-weight:600;color:'+col+'">'+pct+'</span></div><div style="height:6px;background:#22223a;border-radius:4px;overflow:hidden"><div style="height:100%;width:'+(u==null?0:Math.round(u*100))+'%;background:'+col+';transition:width .4s ease"></div></div></div>';
     });
-    o+='</div>';
-  }else if(h.auth&&h.auth.loggedIn){
+  }else{
     var qe=qp&&qp.error;
-    var qmsg=qe?(/^upstream_429$/.test(qe)?'— rate-limited, retrying…':(/^upstream_/.test(qe)?'— upstream error, retrying…':(qe==='fetch_failed'||qe==='refresh_failed'?'— temporarily unavailable, retrying…':(qe==='no_token'?'— no OAuth token':'— ('+qe+')')))):'— no data yet';
-    o+='<div class="section"><div class="section-title">Rate Limits 限额</div><div style="color:var(--muted);font-size:12px">'+qmsg+'</div></div>';
+    var qmsg=qe?(/^upstream_429$/.test(qe)?'— 限流中,稍后再试':(/^upstream_/.test(qe)?'— 上游错误':(qe==='fetch_failed'||qe==='refresh_failed'?'— 暂时不可用':(qe==='no_token'?'— 无 OAuth token':'— ('+qe+')')))):'点击「🔄 刷新额度」查看(实时请求 Anthropic,不自动刷新)';
+    o+='<div style="color:var(--muted);font-size:12px">'+qmsg+'</div>';
   }
+  o+='</div>';
   if(s.byModel&&Object.keys(s.byModel).length>0){o+='<div class="section"><div class="section-title">Models (24h)</div><div class="grid">';for(const[n,d]of Object.entries(s.byModel))o+=card(n,d.count,'avg '+ms(d.avgTotalMs),'');o+='</div></div>'}
   o+='<div class="section"><div class="section-title">Connect an Agent</div><div class="snippet"><div class="snippet-tabs"><div class="snippet-tab active" onclick="showTab(this,&apos;opencode&apos;)">OpenCode</div><div class="snippet-tab" onclick="showTab(this,&apos;crush&apos;)">Crush</div><div class="snippet-tab" onclick="showTab(this,&apos;generic&apos;)">Any Tool</div></div><div id="tab-opencode"><code>ANTHROPIC_API_KEY=x ANTHROPIC_BASE_URL=http://'+location.host+' opencode</code></div><div id="tab-crush" style="display:none"><code>'+JSON.stringify({providers:{meridian:{type:"anthropic",base_url:"http://"+location.host,api_key:"x",models:[{id:"claude-sonnet-4-5-20250514",name:"Sonnet 4.5"}]}}},null,2)+'</code></div><div id="tab-generic" style="display:none"><code>export ANTHROPIC_API_KEY=x\\nexport ANTHROPIC_BASE_URL=http://'+location.host+'</code></div></div></div>';
   o+='<div class="links"><a href="/telemetry" class="link">\ud83d\udcca Telemetry</a><a href="/settings" class="link">\ud83d\udd27 Settings</a><a href="/profiles" class="link">\ud83d\udc64 Profiles</a><a href="/health" class="link">\ud83e\ude7a Health</a><a href="/telemetry/summary" class="link">\ud83d\udcc8 Stats API</a><a href="https://github.com/rynfar/meridian" class="link">\u2699\ufe0f GitHub</a></div>';
@@ -184,7 +198,7 @@ async function mrdExchange(){
     else{if(msg)msg.innerHTML='<span style="color:var(--red)">'+(d.message||('Error '+r.status))+'</span>';}
   }catch(e){if(msg)msg.innerHTML='<span style="color:var(--red)">'+e+'</span>';}
 }
-refresh();var mrdTimer=setInterval(refresh,10000);
+refresh();var mrdTimer=null; // initial render only — no auto-refresh
 ` + profileBarJs + `
 </script>
 </body>

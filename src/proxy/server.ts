@@ -349,7 +349,16 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   {
     const { getSetting } = require("./settings") as typeof import("./settings")
     const { applyProxyEnv } = require("./egressProxy") as typeof import("./egressProxy")
-    applyProxyEnv(getSetting("egressProxy") || undefined)
+    const persistedProxy = getSetting("egressProxy") || undefined
+    applyProxyEnv(persistedProxy)
+    if (persistedProxy) {
+      // The native-egress sidecar singleton spawns at module load — BEFORE this
+      // block runs — so it never inherited the proxy env. Restart it now so the
+      // Go child re-inherits ALL_PROXY and routes through the proxy from a cold
+      // boot (otherwise the proxy only takes effect after a manual re-save).
+      const { restartNativeSupervisor } = require("./nativeSupervisor") as typeof import("./nativeSupervisor")
+      restartNativeSupervisor()
+    }
   }
 
   // Track cumulative discovered tools per SDK session (survives across requests)
