@@ -28,6 +28,8 @@ fi
 # run meridian — exactly as before.
 if [ "$(id -u)" = "0" ]; then
   # (volume ownership is handled by the compose `init` service that chowns to 1000)
+  # Seed baked-in default config so fresh machines match the committed code.
+  [ -x /app/bin/seed-config.sh ] && /app/bin/seed-config.sh
   [ -x /app/bin/redsocks-setup.sh ] && /app/bin/redsocks-setup.sh
   if command -v su-exec >/dev/null 2>&1; then
     # su-exec setuids but does NOT reset HOME — meridian (os.homedir) must see
