@@ -420,6 +420,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         endpoints: ["/v1/messages", "/messages", "/v1/chat/completions", "/v1/models", "/telemetry", "/metrics", "/health"]
       })
     }
+    // Never cache the dashboard HTML — without this browsers heuristically cache
+    // it and keep showing a stale page across deploys (e.g. missing new buttons).
+    c.header("Cache-Control", "no-store, must-revalidate")
     return c.html(landingHtml)
   })
 
@@ -2585,6 +2588,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   // SDK Features settings page and API
   app.get("/settings", (c) => {
     const { settingsPageHtml } = require("../telemetry/settingsPage") as typeof import("../telemetry/settingsPage")
+    c.header("Cache-Control", "no-store, must-revalidate")
     return c.html(settingsPageHtml)
   })
   app.get("/settings/api/features", (c) => {
@@ -2783,6 +2787,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
 
   app.get("/profiles", async (c) => {
     const { profilePageHtml } = await import("../telemetry/profilePage")
+    c.header("Cache-Control", "no-store, must-revalidate")
     return c.html(profilePageHtml)
   })
 
@@ -2855,6 +2860,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
 
   app.get("/plugins", async (c) => {
     const { pluginPageHtml } = await import("./plugins/pluginPage")
+    c.header("Cache-Control", "no-store, must-revalidate")
     return c.html(pluginPageHtml)
   })
 
