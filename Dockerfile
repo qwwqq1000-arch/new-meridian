@@ -31,6 +31,10 @@ RUN rm -rf dist && bun build bin/cli.ts src/proxy/server.ts --outdir dist --targ
 # ---- Runtime stage ----
 FROM node:22-alpine
 
+# redsocks + iptables: transparent egress proxy (force ALL traffic through the
+# configured SOCKS5). su-exec: drop from root (needed for iptables) to claude.
+RUN apk add --no-cache redsocks iptables su-exec
+
 RUN deluser --remove-home node 2>/dev/null; \
     adduser -D -u 1000 claude \
     && mkdir -p /home/claude/.claude \
@@ -59,8 +63,12 @@ RUN mkdir -p /app/bin/shims \
 ENV PATH="/app/bin/shims:$PATH"
 COPY --from=go-build --chown=claude:claude /out/native-egress /app/native-egress
 RUN chmod +x /app/native-egress
-COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh ./bin/
-RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh
+COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh bin/redsocks-setup.sh bin/redsocks-off.sh ./bin/
+RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh ./bin/redsocks-setup.sh ./bin/redsocks-off.sh
+
+# Run as root at runtime so the entrypoint can set up iptables/redsocks; the
+# entrypoint drops to `claude` (su-exec) before exec-ing meridian.
+USER root
 
 EXPOSE 3456
 

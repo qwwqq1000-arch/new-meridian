@@ -21,4 +21,20 @@ elif [ -f "$CLAUDE_JSON" ] && [ ! -L "$CLAUDE_JSON" ] && [ -w "$CLAUDE_DIR" ]; t
   ln -sf "$CLAUDE_JSON_VOL" "$CLAUDE_JSON"
 fi
 
+# --- Egress proxy enforcement + privilege drop (root only) ---
+# The container now starts as root so we can install the redsocks + iptables
+# transparent proxy (forces ALL egress through the configured SOCKS5, self-tests
+# and rolls back on failure). Then we drop to the unprivileged `claude` user to
+# run meridian — exactly as before.
+if [ "$(id -u)" = "0" ]; then
+  # (volume ownership is handled by the compose `init` service that chowns to 1000)
+  [ -x /app/bin/redsocks-setup.sh ] && /app/bin/redsocks-setup.sh
+  if command -v su-exec >/dev/null 2>&1; then
+    # su-exec setuids but does NOT reset HOME — meridian (os.homedir) must see
+    # /home/claude so it reads/writes ~/.config/meridian + ~/.claude correctly.
+    export HOME=/home/claude
+    exec su-exec claude:claude "$@"
+  fi
+fi
+
 exec "$@"
