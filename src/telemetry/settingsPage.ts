@@ -325,7 +325,7 @@ function render() {
 // --- Egress proxy UI ---
 function parseProxyClient(raw){
   raw=(raw||'').trim(); if(!raw)return null;
-  var scheme='socks5', m=raw.match(/^(socks5h?|https?):\/\//i);
+  var scheme='socks5', m=raw.match(new RegExp('^(socks5h?|https?)://','i'));
   if(m){scheme=m[1].toLowerCase();raw=raw.slice(m[0].length);}
   var host='',port=NaN,user,pass;
   if(raw.indexOf('@')>=0){var at=raw.lastIndexOf('@');var auth=raw.slice(0,at);var hp=raw.slice(at+1);var ai=auth.indexOf(':');if(ai>=0){user=decodeURIComponent(auth.slice(0,ai));pass=decodeURIComponent(auth.slice(ai+1));}else if(auth){user=decodeURIComponent(auth);}var hpp=hp.split(':');host=hpp[0];port=parseInt(hpp[1],10);}
