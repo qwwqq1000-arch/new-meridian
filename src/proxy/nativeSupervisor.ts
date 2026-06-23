@@ -65,6 +65,7 @@ export class NativeSupervisor {
   private url: string | null = null
   private cb: CircuitBreaker
   private pollTimer: ReturnType<typeof setInterval> | null = null
+  private restartChain: Promise<void> = Promise.resolve()
   private readonly resolvedBinaryPath: string
   private readonly port: number
 
@@ -109,6 +110,44 @@ export class NativeSupervisor {
       this.child = null
     }
     this.url = null
+  }
+
+  /**
+   * Restart cleanly: kill the child, WAIT for it to actually exit (so the OS
+   * releases the listen port), add a short grace, reset the circuit breaker
+   * (clears the failures the restart churn would otherwise leave behind), then
+   * start fresh. Spawning before the old process frees port 9876 causes a bind
+   * race → the new child exits → sidecar stays unavailable. Used when the egress
+   * proxy changes at runtime (the Go child must re-inherit the new env).
+   *
+   * Restarts are serialized: two quick proxy saves chain instead of racing.
+   */
+  restart(): Promise<void> {
+    this.restartChain = this.restartChain.then(
+      () => this.restartOnce(),
+      () => this.restartOnce(),
+    )
+    return this.restartChain
+  }
+
+  private async restartOnce(): Promise<void> {
+    const old = this.child
+    this.stop()
+    if (old && old.exitCode === null) {
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        old.once("exit", done)
+        setTimeout(done, 3000) // safety cap if SIGTERM is slow
+      })
+    }
+    await new Promise((r) => setTimeout(r, 500)) // grace for socket release
+    this.cb.recordSuccess() // clear stale failures so baseUrl() isn't gated
+    await this.start()
   }
 
   private spawnBinary(): void {
@@ -180,10 +219,10 @@ void _supervisor.start()
  * restart is required for a newly-saved proxy to take effect.
  */
 export function restartNativeSupervisor(): void {
-  try {
-    _supervisor.stop()
-  } catch {}
-  void _supervisor.start()
+  // Fire-and-forget: the endpoint returns immediately while the sidecar restarts
+  // (~3.5s) in the background. restart() waits for the old child to exit before
+  // re-spawning, avoiding the port-bind race that left the sidecar unavailable.
+  void _supervisor.restart().catch(() => {})
 }
 
 /**
