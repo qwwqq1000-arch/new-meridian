@@ -211,7 +211,14 @@ export function testProxy(p: ParsedProxy, timeoutMs = 12000): Promise<ProxyTestR
  * meridian process env — route their outbound traffic through it.
  */
 export function applyProxyEnv(url: string | undefined): void {
-  const names = ["ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+  // ONLY ALL_PROXY/all_proxy. golang.org/x/net/proxy (the native-egress sidecar)
+  // reads these and supports socks5. We deliberately DO NOT set HTTP(S)_PROXY:
+  // undici — used by meridian's own Node fetches (quota / oauth-usage / token
+  // refresh) and by claude.exe — reads those and cannot speak socks5, so a
+  // socks5 value there breaks every Node-side request (the dashboard quota stops
+  // loading). Always strip any stale HTTP(S)_PROXY we may have set before.
+  for (const n of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) delete process.env[n]
+  const names = ["ALL_PROXY", "all_proxy"]
   if (url && url.trim()) {
     for (const n of names) process.env[n] = url
   } else {
