@@ -29,6 +29,12 @@ export interface MeridianSettings {
    * check is skipped globally. Default: true (gate ON — safe default).
    */
   nativeBodyCheck?: boolean
+  /**
+   * Egress proxy (normalized URL, e.g. socks5://user:pass@host:port). Applied
+   * as ALL_PROXY/HTTPS_PROXY env so the SDK subprocess + native sidecar route
+   * outbound traffic through it. Empty/undefined = direct.
+   */
+  egressProxy?: string
 }
 
 /** Read settings from disk. Returns empty object if file doesn't exist or is invalid. */

@@ -107,6 +107,19 @@ ${profileBarHtml}
     followed by your agent's specific instructions.
   </p>
 
+  <div class="adapter-card" style="margin-bottom:24px">
+    <div class="adapter-header"><div class="adapter-name">🌐 出口代理 / Egress Proxy</div><span id="proxy-status" class="adapter-badge badge-inactive">未配置</span></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">粘贴代理(支持 <code>socks5://host:port:user:pass</code> 或标准 URL),自动解析。出口流量(SDK 子进程 + native egress)将走此代理。</div>
+    <textarea id="proxy-input" placeholder="socks5://23.148.60.245:9004:user:pass" style="width:100%;min-height:46px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;font-family:monospace"></textarea>
+    <div id="proxy-parsed" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button onclick="testProxy()" class="reset-btn" style="border-color:var(--accent);color:var(--accent)">🔌 测试代理</button>
+      <button onclick="saveProxy()" class="reset-btn">💾 保存</button>
+      <button onclick="clearProxy()" class="reset-btn">清除</button>
+    </div>
+    <div id="proxy-result" style="font-size:12px;margin-top:10px"></div>
+  </div>
+
   <div id="adapters"></div>
 </div>
 
@@ -308,6 +321,56 @@ function render() {
     container.appendChild(card);
   }
 }
+
+// --- Egress proxy UI ---
+function parseProxyClient(raw){
+  raw=(raw||'').trim(); if(!raw)return null;
+  var scheme='socks5', m=raw.match(/^(socks5h?|https?):\/\//i);
+  if(m){scheme=m[1].toLowerCase();raw=raw.slice(m[0].length);}
+  var host='',port=NaN,user,pass;
+  if(raw.indexOf('@')>=0){var at=raw.lastIndexOf('@');var auth=raw.slice(0,at);var hp=raw.slice(at+1);var ai=auth.indexOf(':');if(ai>=0){user=decodeURIComponent(auth.slice(0,ai));pass=decodeURIComponent(auth.slice(ai+1));}else if(auth){user=decodeURIComponent(auth);}var hpp=hp.split(':');host=hpp[0];port=parseInt(hpp[1],10);}
+  else{var p=raw.split(':');if(p.length<2)return null;host=p[0];port=parseInt(p[1],10);if(p.length>=4){user=p[2];pass=p.slice(3).join(':');}else if(p.length===3){user=p[2];}}
+  if(!host||!(port>0&&port<=65535))return null;
+  return {scheme:scheme,host:host,port:port,user:user,pass:pass};
+}
+function maskPass(p){return p?(p.length<=2?'**':p[0]+'***'+p[p.length-1]):'';}
+function renderProxyParsed(){
+  var raw=document.getElementById('proxy-input').value;
+  var p=parseProxyClient(raw); var el=document.getElementById('proxy-parsed');
+  if(!raw){el.innerHTML='';return;}
+  if(!p){el.innerHTML='<span style="color:var(--red)">无法解析(格式 scheme://host:port:user:pass)</span>';return;}
+  el.innerHTML='✅ <b>'+p.scheme+'</b> · host <b>'+p.host+'</b> · port <b>'+p.port+'</b>'+(p.user?' · user <b>'+p.user+'</b>'+(p.pass?' · pass '+maskPass(p.pass):''):'');
+}
+async function testProxy(){
+  var raw=document.getElementById('proxy-input').value.trim();
+  var r=document.getElementById('proxy-result'); r.innerHTML='<span style="color:var(--muted)">测试中…(最多 12s)</span>';
+  try{
+    var res=await fetch('/settings/api/proxy/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw:raw})});
+    var d=await res.json();
+    if(d.ok){r.innerHTML='<span style="color:var(--green)">✅ 代理可用</span>'+(d.exitIp?' · 出口IP <b>'+d.exitIp+'</b>':'')+(d.latencyMs!=null?' · '+d.latencyMs+'ms':'');}
+    else{r.innerHTML='<span style="color:var(--red)">❌ '+(d.error||'测试失败')+'</span>';}
+  }catch(e){r.innerHTML='<span style="color:var(--red)">❌ '+e+'</span>';}
+}
+async function saveProxy(){
+  var raw=document.getElementById('proxy-input').value.trim();
+  var r=document.getElementById('proxy-result');
+  try{
+    var res=await fetch('/settings/api/proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw:raw})});
+    var d=await res.json();
+    if(d.error){r.innerHTML='<span style="color:var(--red)">❌ '+d.error+'</span>';return;}
+    r.innerHTML='<span style="color:var(--green)">✅ 已保存并应用</span>';
+    var st=document.getElementById('proxy-status'); st.textContent=raw?'已启用':'未配置'; st.className='adapter-badge '+(raw?'badge-active':'badge-inactive');
+    showSaved();
+  }catch(e){r.innerHTML='<span style="color:var(--red)">❌ '+e+'</span>';}
+}
+function clearProxy(){document.getElementById('proxy-input').value='';renderProxyParsed();saveProxy();}
+async function loadProxy(){
+  try{var res=await fetch('/settings/api/proxy');var d=await res.json();
+    if(d.proxy){document.getElementById('proxy-input').value=d.proxy;renderProxyParsed();var st=document.getElementById('proxy-status');st.textContent='已启用';st.className='adapter-badge badge-active';}
+  }catch(e){}
+}
+document.getElementById('proxy-input').addEventListener('input',renderProxyParsed);
+loadProxy();
 
 loadConfig();
 loadGlobalNative();

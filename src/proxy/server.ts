@@ -345,6 +345,13 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   // Restore persisted active profile from last session
   restoreActiveProfile(finalConfig.profiles)
 
+  // Re-apply a persisted egress proxy so spawned children inherit it after restart.
+  {
+    const { getSetting } = require("./settings") as typeof import("./settings")
+    const { applyProxyEnv } = require("./egressProxy") as typeof import("./egressProxy")
+    applyProxyEnv(getSetting("egressProxy") || undefined)
+  }
+
   // Track cumulative discovered tools per SDK session (survives across requests)
   const sessionDiscoveredTools = new Map<string, Set<string>>()
 
@@ -2628,6 +2635,48 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       setSetting("nativeBodyCheck", input.nativeBodyCheck)
     }
     return c.json({ ok: true })
+  })
+
+  // --- Egress proxy (SOCKS5/HTTP) ---
+  app.get("/settings/api/proxy", (c) => {
+    const { getSetting } = require("./settings") as typeof import("./settings")
+    const { parseProxy } = require("./egressProxy") as typeof import("./egressProxy")
+    const url = getSetting("egressProxy") || ""
+    return c.json({ proxy: url, parsed: url ? parseProxy(url) : null })
+  })
+  app.post("/settings/api/proxy/test", async (c) => {
+    const { parseProxy, testProxy } = require("./egressProxy") as typeof import("./egressProxy")
+    let body: { raw?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ ok: false, error: "invalid JSON body" }, 400)
+    }
+    const parsed = parseProxy(body?.raw ?? "")
+    if (!parsed) return c.json({ ok: false, error: "could not parse proxy (expected scheme://host:port:user:pass)" }, 400)
+    const result = await testProxy(parsed)
+    return c.json({ ...result, parsed })
+  })
+  app.post("/settings/api/proxy", async (c) => {
+    const { setSetting } = require("./settings") as typeof import("./settings")
+    const { parseProxy, applyProxyEnv } = require("./egressProxy") as typeof import("./egressProxy")
+    let body: { raw?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400)
+    }
+    const raw = (body?.raw ?? "").trim()
+    if (!raw) {
+      setSetting("egressProxy", "")
+      applyProxyEnv(undefined)
+      return c.json({ ok: true, proxy: "", parsed: null })
+    }
+    const parsed = parseProxy(raw)
+    if (!parsed) return c.json({ error: "could not parse proxy (expected scheme://host:port:user:pass)" }, 400)
+    setSetting("egressProxy", parsed.url)
+    applyProxyEnv(parsed.url)
+    return c.json({ ok: true, proxy: parsed.url, parsed })
   })
 
   // Prometheus metrics endpoint
