@@ -37,6 +37,11 @@ context.md
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/target/
 
+# Native-egress binary (built from source via go build)
+native-egress/native-egress
+native-egress/tls_test
+native-egress/tls_test_main.go
+
 # Local agent tooling (per-developer; never commit)
 .claude/
 .pylon/
