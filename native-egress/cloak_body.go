@@ -69,14 +69,19 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	metaDirty := sanitizeMetadata(body, userID)
 
 	if hasClaudeIdentity(body["system"]) {
-		if changed || metaDirty {
-			if metaDirty && !changed {
-				stripped := stripMetadataPadBytes(raw)
-				return forceStreamTrue(stripped), nil
-			}
+		// c1/c2 are structural conflicts (thinking+tool_choice, thinking+context)
+		// that can't be byte-fixed. c3 (xhigh→high) and metaDirty are byte-fixable.
+		if c1 || c2 {
 			return nil, ErrCCBodyConflict
 		}
-		return forceStreamTrue(raw), nil
+		result := raw
+		if metaDirty {
+			result = stripMetadataPadBytes(result)
+		}
+		if c3 {
+			result = fixEffortXhighBytes(result)
+		}
+		return forceStreamTrue(result), nil
 	}
 
 	fillDefaults(body)
@@ -274,8 +279,11 @@ func fixInvalidEffort(body map[string]any) bool {
 	}
 	effort, _ := oc["effort"].(string)
 	switch effort {
-	case "", "low", "medium", "high", "xhigh", "max":
+	case "", "low", "medium", "high", "max":
 		return false
+	case "xhigh":
+		oc["effort"] = "high"
+		return true
 	default:
 		delete(oc, "effort")
 		return true
@@ -478,7 +486,14 @@ func forceStreamTrue(raw []byte) []byte {
 	return bytes.Replace(raw, []byte(`"stream":false`), []byte(`"stream":true `), 1)
 }
 
+// fixEffortXhighBytes maps "effort":"xhigh" → "effort":"high" at the byte
+// level. Uses key-value regex to avoid replacing "xhigh" in message text.
+// "xhigh" is an SDK-internal value; the API rejects it on all models.
+var effortXhighRe = regexp.MustCompile(`"effort"\s*:\s*"xhigh"`)
 
+func fixEffortXhighBytes(raw []byte) []byte {
+	return effortXhighRe.ReplaceAll(raw, []byte(`"effort":"high"`))
+}
 
 // ValidateBody checks the cloaked body for conditions that will definitely be
 // rejected by the API. Returns a non-empty error message if the request should
