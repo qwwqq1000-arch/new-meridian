@@ -61,7 +61,7 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	c2 := fixThinkingContextConflicts(body)
 	c3 := fixInvalidEffort(body)
 	changed := c1 || c2 || c3
-	logDD("CloakBody: c1=%v c2=%v c3=%v changed=%v thinking=%v temp=%v", c1, c2, c3, changed, body["thinking"], body["temperature"])
+	logDD("CloakBody: c1=%v c2=%v c3=%v changed=%v thinking=%v temp=%v oc_effort=%v top_effort=%v reasoning_effort=%v", c1, c2, c3, changed, body["thinking"], body["temperature"], func() any { if oc, ok := body["output_config"].(map[string]any); ok { return oc["effort"] }; return nil }(), body["effort"], body["reasoning_effort"])
 
 	// Sanitize fields that ALL requests need cleaned — even CC-shaped ones.
 	// These are lightweight fixes that don't alter the structural shape.

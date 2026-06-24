@@ -78,6 +78,11 @@ func (c *BodyTemplateCache) LearnFromCC(rawBody []byte, fpVersion, fpBetas, fpNo
 		tmpl.ContextManagement = cm
 	}
 	if oc, ok := body["output_config"]; ok {
+		if ocMap, ok := oc.(map[string]any); ok {
+			if ocMap["effort"] == "xhigh" {
+				ocMap["effort"] = "high"
+			}
+		}
 		tmpl.OutputConfig = oc
 	}
 	if diag, ok := body["diagnostics"]; ok {
