@@ -43,10 +43,8 @@ func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stre
 	h.Set("x-stainless-retry-count", "0")
 	h.Set("x-claude-code-session-id", sessionID)
 	h.Set("x-client-request-id", clientRequestID)
-	if stream {
-		h.Set("accept", "text/event-stream")
-	} else {
-		h.Set("accept", "application/json")
-	}
+	// Always request SSE from upstream — NE assembles to JSON for non-stream
+	// clients. This gives fast TTFB and matches real CC's always-stream behavior.
+	h.Set("accept", "text/event-stream")
 	return h
 }

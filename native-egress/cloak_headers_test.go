@@ -17,8 +17,9 @@ func TestBuildHeaders(t *testing.T) {
 	if h.Get("x-stainless-retry-count") != "0" {
 		t.Fatal("retry-count")
 	}
-	if h.Get("accept") != "application/json" {
-		t.Fatalf("non-stream accept: %q", h.Get("accept"))
+	// Always SSE — NE assembles to JSON for non-stream clients
+	if h.Get("accept") != "text/event-stream" {
+		t.Fatalf("accept: %q (should always be SSE)", h.Get("accept"))
 	}
 	if h.Get("connection") != "" {
 		t.Fatal("connection header must not be set (real CC omits it)")
@@ -39,7 +40,6 @@ func TestBuildHeadersUnionsClientBeta(t *testing.T) {
 	fp := Fingerprint{"anthropic-beta": "claude-code-20250219,oauth-2025-04-20"}
 	h := BuildHeaders(fp, "t", "s", "r", false, "structured-outputs-2025-12-15,oauth-2025-04-20")
 	got := h.Get("anthropic-beta")
-	// Union: capture baseline + client betas (deduped). No forced injection.
 	want := "claude-code-20250219,oauth-2025-04-20,structured-outputs-2025-12-15"
 	if got != want {
 		t.Fatalf("beta union:\n got: %q\nwant: %q", got, want)
@@ -50,7 +50,6 @@ func TestBuildHeadersNoBetaInjectionWithoutClient(t *testing.T) {
 	fp := Fingerprint{"anthropic-beta": "claude-code-20250219"}
 	h := BuildHeaders(fp, "t", "s", "r", false, "")
 	got := h.Get("anthropic-beta")
-	// When client sends no extra betas, only the captured baseline remains
 	if got != "claude-code-20250219" {
 		t.Fatalf("expected only captured beta, got: %q", got)
 	}

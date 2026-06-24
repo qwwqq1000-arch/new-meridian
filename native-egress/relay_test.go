@@ -23,9 +23,6 @@ type alwaysErr struct{}
 
 func (e *alwaysErr) Error() string { return "always error" }
 
-// writeTempCreds writes a .credentials.json with the given access token
-// into a temp dir (mirrors the Task 6 oauth.go credsFile format) and returns
-// the dir path.
 func writeTempCreds(t *testing.T, token string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,13 +40,45 @@ func writeTempCreds(t *testing.T, token string) string {
 	return dir
 }
 
-// relayReqRaw builds a /relay request the way Node does: the raw client body as
-// the POST body, with metadata in headers.
 func relayReqRaw(dir, account string, body []byte) *http.Request {
 	req := httptest.NewRequest("POST", "/relay", bytes.NewReader(body))
 	req.Header.Set("X-Native-Config-Dir", dir)
 	req.Header.Set("X-Native-Account", account)
 	return req
+}
+
+func relayReqStream(dir, account string, body []byte) *http.Request {
+	req := relayReqRaw(dir, account, body)
+	req.Header.Set("X-Native-Stream", "1")
+	return req
+}
+
+const minimalSSE = `event: message_start
+data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"claude-opus-4-6","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+func sseResponse() *http.Response {
+	return &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(minimalSSE)),
+	}
 }
 
 func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
@@ -58,7 +87,7 @@ func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 			gotUA = r.Header.Get("User-Agent")
-			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+			return sseResponse(), nil
 		}),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
 		SessionID: func(string) string { return "s" },
@@ -68,7 +97,7 @@ func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
 	if rec.Header().Get("X-Degrade") == "1" {
-		t.Fatal("should not degrade — builtin fingerprint should be used")
+		t.Fatalf("should not degrade — builtin fingerprint should be used, got reason: %s", rec.Header().Get("X-Degrade-Reason"))
 	}
 	if !strings.HasPrefix(gotUA, "claude-cli/") {
 		t.Fatalf("expected builtin UA, got %q", gotUA)
@@ -81,16 +110,15 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 			gotAuth = r.Header.Get("authorization")
 			gotUA = r.Header.Get("user-agent")
-			return &http.Response{StatusCode: 200, Body: http.NoBody, Header: http.Header{}}, nil
+			return sseResponse(), nil
 		}),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
 	}
-	// token comes from a creds file the handler reads; point configDir at a temp dir
 	dir := writeTempCreds(t, "tok-abc")
 	rec := httptest.NewRecorder()
-	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
+	req := relayReqStream(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
 	if gotAuth != "Bearer tok-abc" {
 		t.Fatalf("auth: %q", gotAuth)
@@ -100,16 +128,13 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 	}
 }
 
-// The relay must forward the client body BYTE-FOR-BYTE. A thinking block's
-// signature is computed over the original text (including `<`,`>` chars that a
-// JSON re-marshal would HTML-escape), so any re-serialization breaks it.
 func TestRelayForwardsBodyVerbatim(t *testing.T) {
 	raw := []byte(`{"model":"x","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a<b>c&d","signature":"SIG=="}]}]}`)
 	var sent []byte
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 			sent, _ = io.ReadAll(r.Body)
-			return &http.Response{StatusCode: 200, Body: http.NoBody, Header: http.Header{}}, nil
+			return sseResponse(), nil
 		}),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
@@ -117,9 +142,48 @@ func TestRelayForwardsBodyVerbatim(t *testing.T) {
 	}
 	dir := writeTempCreds(t, "tok")
 	rec := httptest.NewRecorder()
-	relayHandler(deps)(rec, relayReqRaw(dir, "a", raw))
+	relayHandler(deps)(rec, relayReqStream(dir, "a", raw))
 	if string(sent) != string(raw) {
 		t.Fatalf("body must be verbatim.\n got: %s\nwant: %s", sent, raw)
+	}
+}
+
+func TestRelayNonStreamAssemblesSSE(t *testing.T) {
+	deps := RelayDeps{
+		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get("Accept") != "text/event-stream" {
+				t.Fatal("upstream request must always use SSE")
+			}
+			return sseResponse(), nil
+		}),
+		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		SessionID: func(string) string { return "s" },
+		Now:       time.Now,
+	}
+	dir := writeTempCreds(t, "tok-ns")
+	rec := httptest.NewRecorder()
+	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
+	relayHandler(deps)(rec, req)
+	if rec.Header().Get("X-Degrade") == "1" {
+		t.Fatalf("unexpected degrade: %s", rec.Header().Get("X-Degrade-Reason"))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("non-stream response should be JSON, got: %q", ct)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &msg); err != nil {
+		t.Fatalf("response not valid JSON: %s\nbody: %s", err, rec.Body.String())
+	}
+	if msg["id"] != "msg_test" {
+		t.Fatalf("assembled message id: %v", msg["id"])
+	}
+	content, _ := msg["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content blocks: %d", len(content))
+	}
+	block, _ := content[0].(map[string]any)
+	if block["text"] != "ok" {
+		t.Fatalf("text: %q", block["text"])
 	}
 }
 
@@ -127,12 +191,10 @@ func TestRedactAuth(t *testing.T) {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer supersecrettoken1234")
 	h.Set("Content-Type", "application/json")
-
 	redacted := RedactAuth(h)
 	if redacted.Get("Authorization") != "Bearer ***1234" {
 		t.Fatalf("unexpected redaction: %q", redacted.Get("Authorization"))
 	}
-	// original must be unchanged
 	if h.Get("Authorization") != "Bearer supersecrettoken1234" {
 		t.Fatal("original header was mutated")
 	}
@@ -169,7 +231,6 @@ func TestRelayDegradesOnMissingToken(t *testing.T) {
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
 	}
-	// configDir with no credentials file
 	dir := t.TempDir()
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))

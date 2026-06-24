@@ -91,7 +91,8 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
-		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), stream, clientBeta)
+		// Always stream from upstream — NE assembles to JSON for non-stream clients.
+		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), true, clientBeta)
 
 		upReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {
@@ -118,6 +119,31 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		requestID := resp.Header.Get("Request-Id")
 
+		if !stream {
+			// Client wants non-streaming: read full SSE, assemble final Message JSON.
+			assembled, assembleErr := assembleSSEToMessage(resp.Body)
+			if assembleErr != nil {
+				degrade(w, "sse_assemble_error")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if requestID != "" {
+				w.Header().Set("Request-Id", requestID)
+			}
+			w.WriteHeader(200)
+			w.Write(assembled)
+
+			if d.Datadog != nil {
+				relayDuration := time.Since(relayStart).Milliseconds()
+				model := extractModel(rawBody)
+				input, output, cached, stopReason, toolCount := extractResponseMeta(assembled)
+				d.Datadog.EmitAfterRelay(d.SessionID(account), model, requestID, stopReason,
+					input, output, cached, toolCount, relayDuration, len(rawBody))
+			}
+			return
+		}
+
+		// Streaming: forward SSE events to client.
 		for k, vs := range resp.Header {
 			kl := strings.ToLower(k)
 			if kl == "content-encoding" || kl == "content-length" {

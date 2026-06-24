@@ -74,11 +74,11 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 			// signatures. Use byte-level metadata strip on the raw body.
 			if metaDirty && !changed {
 				stripped := stripMetadataPadBytes(raw)
-				return stripped, nil
+				return forceStreamTrue(stripped), nil
 			}
 			return nil, ErrCCBodyConflict
 		}
-		return raw, nil
+		return forceStreamTrue(raw), nil
 	}
 
 	fillDefaults(body)
@@ -471,6 +471,13 @@ func stripMetadataPadBytes(raw []byte) []byte {
 	trailingComma := regexp.MustCompile(`,\s*}`)
 	result = trailingComma.ReplaceAll(result, []byte("}"))
 	return result
+}
+
+// forceStreamTrue ensures the body has "stream":true at the byte level.
+// Real CC always streams; non-CC bodies set it via fillDefaults. This handles
+// the CC-shaped verbatim path where we cannot re-marshal.
+func forceStreamTrue(raw []byte) []byte {
+	return bytes.Replace(raw, []byte(`"stream":false`), []byte(`"stream":true `), 1)
 }
 
 // ValidateBody checks the cloaked body for conditions that will definitely be
