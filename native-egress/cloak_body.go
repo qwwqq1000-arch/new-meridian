@@ -78,6 +78,7 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 
 	body["system"] = normalizeSystem(body["system"])
 	sanitizeCacheTTL(body)
+	sanitizeThinkingBlocks(body)
 	meta, _ := body["metadata"].(map[string]any)
 	if meta == nil {
 		meta = map[string]any{}
@@ -362,32 +363,86 @@ func normalizeSystem(sys any) []any {
 }
 
 func sanitizeCacheTTL(body map[string]any) {
-	var walk func(any)
-	fix := func(b map[string]any) {
+	fixAny := func(b map[string]any) {
 		if cc, ok := b["cache_control"].(map[string]any); ok {
 			if ttl, has := cc["ttl"]; has && ttl != "5m" && ttl != "1h" {
 				cc["ttl"] = "5m"
 			}
 		}
 	}
-	walk = func(node any) {
+	// Messages must use 5m — a 1h in messages after any 5m in
+	// tools/system triggers API 400 (TTL ordering constraint).
+	fix5m := func(b map[string]any) {
+		if cc, ok := b["cache_control"].(map[string]any); ok {
+			if ttl, _ := cc["ttl"].(string); ttl == "1h" {
+				cc["ttl"] = "5m"
+			}
+			if ttl, has := cc["ttl"]; has && ttl != "5m" && ttl != "1h" {
+				cc["ttl"] = "5m"
+			}
+		}
+	}
+	var walkAny func(any)
+	walkAny = func(node any) {
 		arr, ok := node.([]any)
 		if !ok {
 			return
 		}
 		for _, item := range arr {
 			if b, ok := item.(map[string]any); ok {
-				fix(b)
-				walk(b["content"])
+				fixAny(b)
+				walkAny(b["content"])
 			}
 		}
 	}
-	walk(body["system"])
-	walk(body["tools"])
+	var walk5m func(any)
+	walk5m = func(node any) {
+		arr, ok := node.([]any)
+		if !ok {
+			return
+		}
+		for _, item := range arr {
+			if b, ok := item.(map[string]any); ok {
+				fix5m(b)
+				walk5m(b["content"])
+			}
+		}
+	}
+	walkAny(body["system"])
+	walkAny(body["tools"])
 	if msgs, ok := body["messages"].([]any); ok {
 		for _, m := range msgs {
 			if mm, ok := m.(map[string]any); ok {
-				walk(mm["content"])
+				walk5m(mm["content"])
+			}
+		}
+	}
+}
+
+// sanitizeThinkingBlocks strips non-standard fields from thinking content blocks.
+// Anthropic only allows type, thinking, signature (and cache_control) on thinking
+// blocks. Clients like opencode add extra fields (e.g. alternative_display_type)
+// that cause 400 errors.
+func sanitizeThinkingBlocks(body map[string]any) {
+	allowed := map[string]bool{"type": true, "thinking": true, "signature": true, "cache_control": true}
+	msgs, _ := body["messages"].([]any)
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm == nil {
+			continue
+		}
+		content, _ := mm["content"].([]any)
+		for _, c := range content {
+			block, _ := c.(map[string]any)
+			if block == nil {
+				continue
+			}
+			if block["type"] == "thinking" {
+				for k := range block {
+					if !allowed[k] {
+						delete(block, k)
+					}
+				}
 			}
 		}
 	}
