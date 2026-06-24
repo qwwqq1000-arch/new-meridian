@@ -85,6 +85,12 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	if _, ok := meta["user_id"].(string); !ok || meta["user_id"] == "" {
 		meta["user_id"] = userID
 	}
+	// Strip non-standard metadata fields — Anthropic only allows user_id.
+	for k := range meta {
+		if k != "user_id" {
+			delete(meta, k)
+		}
+	}
 	body["metadata"] = meta
 	return marshalBody(body)
 }

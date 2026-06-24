@@ -3,8 +3,9 @@
  */
 
 import { exec as execCallback, execFile as execFileCallback } from "child_process"
-import { existsSync, statSync } from "fs"
+import { existsSync, statSync, readFileSync } from "fs"
 import { fileURLToPath } from "url"
+import { homedir } from "os"
 import { join, dirname } from "path"
 import { promisify } from "util"
 
@@ -247,6 +248,15 @@ export async function getClaudeAuthStatusAsync(profileId?: string, envOverrides?
         ...(envOverrides ? { env: { ...process.env, ...envOverrides } } : {}),
       })
       const parsed = JSON.parse(stdout) as ClaudeAuthStatus
+      if (parsed.loggedIn && !parsed.email) {
+        const configDir = envOverrides?.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")
+        try {
+          const raw = readFileSync(join(configDir, ".claude.json"), "utf-8")
+          const acct = JSON.parse(raw)?.oauthAccount
+          if (acct?.emailAddress) parsed.email = acct.emailAddress
+          if (acct?.organizationType && !parsed.subscriptionType) parsed.subscriptionType = acct.organizationType
+        } catch {}
+      }
       if (cache) {
         cache.status = parsed; cache.lastKnownGood = parsed
         cache.at = Date.now(); cache.isFailure = false; cache.lastSuccessAt = Date.now()

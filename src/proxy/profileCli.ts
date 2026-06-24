@@ -202,26 +202,41 @@ function saveProfileConfig(profiles: ProfileConfig[]): void {
   writeFileSync(CONFIG_FILE, `${JSON.stringify(profiles, null, 2)}\n`, { mode: 0o600 })
 }
 
+function readOAuthAccountFromConfig(configDir: string): { email?: string; subscriptionType?: string } | null {
+  try {
+    const dir = configDir || join(homedir(), ".claude")
+    const raw = readFileSync(join(dir, ".claude.json"), "utf-8")
+    const data = JSON.parse(raw)
+    const acct = data?.oauthAccount
+    if (!acct) return null
+    return {
+      email: acct.emailAddress || undefined,
+      subscriptionType: acct.organizationType || undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
 function getAuthStatus(configDir: string): { loggedIn: boolean; email?: string; subscriptionType?: string } {
-  // Route through the synchronous resolver instead of relying on `claude`
-  // being on PATH (#478). The CLI command runs in whatever environment
-  // the user invokes it — under systemd or bunx-without-global-claude,
-  // PATH won't have a claude binary even when meridian's own bundled or
-  // platform-package binary is right there in node_modules.
   const resolved = resolveClaudeExecutableSync()
   if (!resolved) {
     console.warn(`[meridian] Could not resolve a Claude executable for auth check (set MERIDIAN_CLAUDE_PATH or install @anthropic-ai/claude-code)`)
     return { loggedIn: false }
   }
   try {
-    // execFileSync (vs execSync) avoids quoting issues with spaces in the
-    // resolved path and bypasses the shell entirely — no PATH lookup.
     const result = execFileSync(resolved.path, ["auth", "status"], {
       timeout: 5000,
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
       stdio: ["pipe", "pipe", "pipe"],
     })
-    return JSON.parse(result.toString())
+    const status = JSON.parse(result.toString())
+    if (status.loggedIn && !status.email) {
+      const fallback = readOAuthAccountFromConfig(configDir)
+      if (fallback?.email) status.email = fallback.email
+      if (fallback?.subscriptionType && !status.subscriptionType) status.subscriptionType = fallback.subscriptionType
+    }
+    return status
   } catch (err) {
     console.warn(`[meridian] Auth check failed for ${configDir}: ${err instanceof Error ? err.message : err}`)
     return { loggedIn: false }

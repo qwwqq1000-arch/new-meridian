@@ -65,6 +65,23 @@ func NewFPCache(ttl time.Duration, capture func(string) (string, error)) *FPCach
 	return &FPCache{ttl: ttl, capture: capture, entries: map[string]fpEntry{}}
 }
 
+// builtinFP is a hard-coded fingerprint derived from a real Claude Code 2.1.187
+// session. Used as an immediate fallback so new nodes don't need a live CC
+// request to activate the native path.
+var builtinFP = Fingerprint{
+	"user-agent":                            "claude-cli/2.1.187 (external, sdk-cli)",
+	"anthropic-version":                     "2023-06-01",
+	"anthropic-beta":                        "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,redact-thinking-2026-02-12,mid-conversation-system-2026-04-07,fallback-credit-2026-06-01",
+	"anthropic-dangerous-direct-browser-access": "true",
+	"x-stainless-lang":                      "js",
+	"x-stainless-os":                        "Linux",
+	"x-stainless-arch":                      "x64",
+	"x-stainless-runtime":                   "node",
+	"x-stainless-runtime-version":           "v24.3.0",
+	"x-stainless-package-version":           "0.94.0",
+	"x-app":                                 "cli",
+}
+
 func (c *FPCache) Get(account, configDir string, now time.Time) (Fingerprint, bool) {
 	c.mu.Lock()
 	if e, ok := c.entries[account]; ok && now.Sub(e.capturedAt) <= c.ttl {
@@ -74,17 +91,22 @@ func (c *FPCache) Get(account, configDir string, now time.Time) (Fingerprint, bo
 	c.mu.Unlock()
 
 	log, err := c.capture(configDir)
-	if err != nil {
-		return nil, false
+	if err == nil {
+		if fp, ok := ParseFingerprint(log); ok {
+			c.mu.Lock()
+			c.entries[account] = fpEntry{fp: fp, capturedAt: now}
+			c.mu.Unlock()
+			return fp, true
+		}
 	}
-	fp, ok := ParseFingerprint(log)
-	if !ok {
-		return nil, false
-	}
+
+	// Live capture failed — use built-in fingerprint so the node is
+	// immediately operational after credential upload.
+	logDD("fingerprint capture failed, using built-in fallback")
 	c.mu.Lock()
-	c.entries[account] = fpEntry{fp: fp, capturedAt: now}
+	c.entries[account] = fpEntry{fp: builtinFP, capturedAt: now}
 	c.mu.Unlock()
-	return fp, true
+	return builtinFP, true
 }
 
 // Peek returns the first cached fingerprint (any account). Used by DatadogEmitter
