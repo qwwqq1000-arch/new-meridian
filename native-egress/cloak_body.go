@@ -6,6 +6,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -62,15 +63,21 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	changed := c1 || c2 || c3
 	logDD("CloakBody: c1=%v c2=%v c3=%v changed=%v thinking=%v temp=%v", c1, c2, c3, changed, body["thinking"], body["temperature"])
 
+	// Sanitize fields that ALL requests need cleaned — even CC-shaped ones.
+	// These are lightweight fixes that don't alter the structural shape.
+	sanitizeThinkingBlocks(body)
+	metaDirty := sanitizeMetadata(body, userID)
+
 	if hasClaudeIdentity(body["system"]) {
-		if changed {
-			// CC body had conflicts that were fixed in the parsed map, but
-			// re-marshaling would corrupt thinking block signatures. Return
-			// ErrCCBodyConflict so relay can pre-reject with a clear message.
+		if changed || metaDirty {
+			// Body needs fixes but re-marshaling would corrupt thinking
+			// signatures. Use byte-level metadata strip on the raw body.
+			if metaDirty && !changed {
+				stripped := stripMetadataPadBytes(raw)
+				return stripped, nil
+			}
 			return nil, ErrCCBodyConflict
 		}
-		// Never re-marshal CC bodies — signatures are fragile.
-		// cache_control is an optimization; skip if absent.
 		return raw, nil
 	}
 
@@ -78,21 +85,6 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 
 	body["system"] = normalizeSystem(body["system"])
 	sanitizeCacheTTL(body)
-	sanitizeThinkingBlocks(body)
-	meta, _ := body["metadata"].(map[string]any)
-	if meta == nil {
-		meta = map[string]any{}
-	}
-	if _, ok := meta["user_id"].(string); !ok || meta["user_id"] == "" {
-		meta["user_id"] = userID
-	}
-	// Strip non-standard metadata fields — Anthropic only allows user_id.
-	for k := range meta {
-		if k != "user_id" {
-			delete(meta, k)
-		}
-	}
-	body["metadata"] = meta
 	return marshalBody(body)
 }
 
@@ -446,6 +438,39 @@ func sanitizeThinkingBlocks(body map[string]any) {
 			}
 		}
 	}
+}
+
+// sanitizeMetadata ensures only user_id exists in metadata. Returns true if
+// any non-standard keys were removed (body was dirtied).
+func sanitizeMetadata(body map[string]any, userID string) bool {
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	if _, ok := meta["user_id"].(string); !ok || meta["user_id"] == "" {
+		meta["user_id"] = userID
+	}
+	dirty := false
+	for k := range meta {
+		if k != "user_id" {
+			delete(meta, k)
+			dirty = true
+		}
+	}
+	body["metadata"] = meta
+	return dirty
+}
+
+// stripMetadataPadBytes removes "pad":"..." from metadata in raw JSON bytes
+// without full re-marshal — preserving thinking block signatures.
+func stripMetadataPadBytes(raw []byte) []byte {
+	// Quick regex: remove ,"pad":"..." or "pad":"...", from the metadata object
+	re := regexp.MustCompile(`"pad"\s*:\s*"[^"]*"\s*,?\s*`)
+	result := re.ReplaceAll(raw, nil)
+	// Fix trailing comma before closing brace: ,}
+	trailingComma := regexp.MustCompile(`,\s*}`)
+	result = trailingComma.ReplaceAll(result, []byte("}"))
+	return result
 }
 
 // ValidateBody checks the cloaked body for conditions that will definitely be

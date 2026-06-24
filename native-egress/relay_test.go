@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,12 +52,14 @@ func relayReqRaw(dir, account string, body []byte) *http.Request {
 	return req
 }
 
-func TestRelayDegradesWhenNoFingerprint(t *testing.T) {
-	// Use a real creds file so ReadToken succeeds; with an always-error FP fetcher,
-	// the handler must degrade at the fingerprint step — NOT at no_token.
+func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
 	dir := writeTempCreds(t, "tok-fp-test")
+	var gotUA string
 	deps := RelayDeps{
-		Transport: rtFunc(func(*http.Request) (*http.Response, error) { t.Fatal("must not forward"); return nil, nil }),
+		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+			gotUA = r.Header.Get("User-Agent")
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+		}),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
@@ -64,11 +67,11 @@ func TestRelayDegradesWhenNoFingerprint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
-	if rec.Header().Get("X-Degrade") != "1" {
-		t.Fatalf("expected degrade, got code %d", rec.Code)
+	if rec.Header().Get("X-Degrade") == "1" {
+		t.Fatal("should not degrade — builtin fingerprint should be used")
 	}
-	if rec.Header().Get("X-Degrade-Reason") != "no_fingerprint" {
-		t.Fatalf("expected no_fingerprint reason, got %q", rec.Header().Get("X-Degrade-Reason"))
+	if !strings.HasPrefix(gotUA, "claude-cli/") {
+		t.Fatalf("expected builtin UA, got %q", gotUA)
 	}
 }
 
