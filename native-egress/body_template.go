@@ -126,9 +126,6 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	// FROM TEMPLATE (the real CLI structure)
 	result["system"] = tmpl.System
 	result["stream"] = tmpl.Stream
-	if tmpl.ContextManagement != nil {
-		result["context_management"] = tmpl.ContextManagement
-	}
 	if tmpl.OutputConfig != nil {
 		result["output_config"] = tmpl.OutputConfig
 	}
@@ -170,6 +167,13 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	// User can override thinking
 	if th, ok := user["thinking"]; ok {
 		result["thinking"] = th
+	}
+
+	// context_management with clear_thinking requires thinking to be enabled
+	if tmpl.ContextManagement != nil {
+		if _, hasThinking := result["thinking"]; hasThinking {
+			result["context_management"] = tmpl.ContextManagement
+		}
 	}
 
 	// Never inflate user's max_tokens — shrink thinking to fit
