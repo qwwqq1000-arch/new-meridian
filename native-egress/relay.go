@@ -133,13 +133,18 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			if requestID != "" {
 				w.Header().Set("Request-Id", requestID)
 			}
+			input, output, cached, cacheCreation, _, _ := extractResponseMeta(assembled)
+			w.Header().Set("X-Usage-Input", fmt.Sprintf("%d", input))
+			w.Header().Set("X-Usage-Output", fmt.Sprintf("%d", output))
+			w.Header().Set("X-Usage-Cache-Read", fmt.Sprintf("%d", cached))
+			w.Header().Set("X-Usage-Cache-Creation", fmt.Sprintf("%d", cacheCreation))
 			w.WriteHeader(200)
 			w.Write(assembled)
 
 			if d.Datadog != nil {
 				relayDuration := time.Since(relayStart).Milliseconds()
 				model := extractModel(rawBody)
-				input, output, cached, stopReason, toolCount := extractResponseMeta(assembled)
+				input, output, cached, _, stopReason, toolCount := extractResponseMeta(assembled)
 				d.Datadog.EmitAfterRelay(d.SessionID(account), model, requestID, stopReason,
 					input, output, cached, toolCount, relayDuration, len(rawBody))
 			}
@@ -180,7 +185,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		if d.Datadog != nil {
 			relayDuration := time.Since(relayStart).Milliseconds()
 			model := extractModel(rawBody)
-			input, output, cached, stopReason, toolCount := extractResponseMeta(respCapture.Bytes())
+			input, output, cached, _, stopReason, toolCount := extractResponseMeta(respCapture.Bytes())
 			d.Datadog.EmitAfterRelay(d.SessionID(account), model, requestID, stopReason,
 				input, output, cached, toolCount, relayDuration, len(rawBody))
 		}
@@ -228,33 +233,35 @@ func extractModel(body []byte) string {
 	return "claude-sonnet-4-6"
 }
 
-func extractResponseMeta(respData []byte) (input, output, cached int, stopReason string, toolCount int) {
+func extractResponseMeta(respData []byte) (input, output, cached, cacheCreation int, stopReason string, toolCount int) {
 	var msg struct {
 		Usage struct {
-			InputTokens          int `json:"input_tokens"`
-			OutputTokens         int `json:"output_tokens"`
-			CacheReadInputTokens int `json:"cache_read_input_tokens"`
+			InputTokens               int `json:"input_tokens"`
+			OutputTokens              int `json:"output_tokens"`
+			CacheReadInputTokens      int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens  int `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 		StopReason string `json:"stop_reason"`
 		Content    []struct {
 			Type string `json:"type"`
 		} `json:"content"`
 	}
-	if json.Unmarshal(respData, &msg) == nil && msg.Usage.InputTokens > 0 {
+	if json.Unmarshal(respData, &msg) == nil && (msg.Usage.InputTokens > 0 || msg.Usage.CacheReadInputTokens > 0) {
 		for _, c := range msg.Content {
 			if c.Type == "tool_use" {
 				toolCount++
 			}
 		}
-		return msg.Usage.InputTokens, msg.Usage.OutputTokens, msg.Usage.CacheReadInputTokens, msg.StopReason, toolCount
+		return msg.Usage.InputTokens, msg.Usage.OutputTokens, msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens, msg.StopReason, toolCount
 	}
 	for _, line := range bytes.Split(respData, []byte("\n")) {
 		line = bytes.TrimPrefix(line, []byte("data: "))
 		if json.Unmarshal(line, &msg) == nil {
-			if msg.Usage.InputTokens > 0 {
+			if msg.Usage.InputTokens > 0 || msg.Usage.CacheReadInputTokens > 0 {
 				input = msg.Usage.InputTokens
 				output = msg.Usage.OutputTokens
 				cached = msg.Usage.CacheReadInputTokens
+				cacheCreation = msg.Usage.CacheCreationInputTokens
 			}
 			if msg.StopReason != "" {
 				stopReason = msg.StopReason

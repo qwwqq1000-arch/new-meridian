@@ -942,6 +942,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               diagnosticLog.session(`${requestMeta.requestId} relay=native`, requestMeta.requestId)
               const nativeTtfb = r.response!.headers.get("X-Upstream-TTFB-Ms")
               const nativeTtfbMs = nativeTtfb ? parseInt(nativeTtfb, 10) : null
+              const nativeInput = r.response!.headers.get("X-Usage-Input")
+              const nativeOutput = r.response!.headers.get("X-Usage-Output")
+              const nativeCacheRead = r.response!.headers.get("X-Usage-Cache-Read")
+              const nativeCacheCreation = r.response!.headers.get("X-Usage-Cache-Creation")
               const nativeNow = Date.now()
               telemetryStore.record({
                 requestId: requestMeta.requestId,
@@ -966,8 +970,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                 contentBlocks: 0,
                 textEvents: 0,
                 error: null,
-                inputTokens: undefined,
-                outputTokens: undefined,
+                inputTokens: nativeInput ? parseInt(nativeInput, 10) : undefined,
+                outputTokens: nativeOutput ? parseInt(nativeOutput, 10) : undefined,
+                cacheReadInputTokens: nativeCacheRead ? parseInt(nativeCacheRead, 10) : undefined,
+                cacheCreationInputTokens: nativeCacheCreation ? parseInt(nativeCacheCreation, 10) : undefined,
               })
               return r.response!
             }
