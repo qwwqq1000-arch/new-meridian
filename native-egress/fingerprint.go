@@ -87,14 +87,32 @@ func (c *FPCache) Get(account, configDir string, now time.Time) (Fingerprint, bo
 	return fp, true
 }
 
+// Peek returns the first cached fingerprint (any account). Used by DatadogEmitter
+// to read version/betas/node_version without importing lock internals.
+func (c *FPCache) Peek() Fingerprint {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		return e.fp
+	}
+	return nil
+}
+
 // defaultCapture returns a capture func that runs the real CLI with
-// ANTHROPIC_LOG=debug to surface its outgoing headers.
-func defaultCapture(claudePath, configDir string) func(string) (string, error) {
-	return func(string) (string, error) {
+// ANTHROPIC_LOG=debug to surface its outgoing headers. The returned func
+// uses its per-call configDir argument (from the relay request's
+// X-Native-Config-Dir), falling back to the server-startup configDir only
+// when the caller passes "".
+func defaultCapture(claudePath, fallbackConfigDir string) func(string) (string, error) {
+	return func(configDir string) (string, error) {
+		dir := configDir
+		if dir == "" {
+			dir = fallbackConfigDir
+		}
 		cmd := exec.Command(claudePath, "-p", "hi")
 		cmd.Env = append(append([]string{}, osEnviron()...),
-			"ANTHROPIC_LOG=debug", "CLAUDE_CONFIG_DIR="+resolveConfigDir(configDir))
-		out, _ := cmd.CombinedOutput() // headers are logged before any non-2xx; ignore exit code
+			"ANTHROPIC_LOG=debug", "CLAUDE_CONFIG_DIR="+resolveConfigDir(dir))
+		out, _ := cmd.CombinedOutput()
 		return string(out), nil
 	}
 }

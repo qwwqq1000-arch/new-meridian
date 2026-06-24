@@ -40,12 +40,16 @@ func newServer() http.Handler {
 	}
 
 	fpCache := NewFPCache(10*time.Minute, defaultCapture(claudePath, configDir))
+	bodyTmpl := NewBodyTemplateCache(10 * time.Minute)
+	transport := NewUTLSTransport()
 
 	deps := RelayDeps{
-		Transport: NewUTLSTransport(),
-		FP:        fpCache,
-		SessionID: stableSessionID,
-		Now:       time.Now,
+		Transport:    transport,
+		FP:           fpCache,
+		BodyTemplate: bodyTmpl,
+		SessionID:    stableSessionID,
+		Now:          time.Now,
+		Datadog:      NewDatadogEmitter(transport, bodyTmpl, fpCache),
 	}
 
 	mux := http.NewServeMux()

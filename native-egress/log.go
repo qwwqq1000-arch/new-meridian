@@ -26,7 +26,8 @@ func RedactAuth(h http.Header) http.Header {
 // to stderr. Gated by MERIDIAN_NATIVE_DEBUG (default: enabled — set to "0"
 // or "false" to silence).
 func logRelay(account string, headers http.Header, body []byte) {
-	if v := os.Getenv("MERIDIAN_NATIVE_DEBUG"); v == "0" || v == "false" {
+	v := os.Getenv("MERIDIAN_NATIVE_DEBUG")
+	if v != "1" && v != "true" {
 		return
 	}
 	safe := RedactAuth(headers)
@@ -37,7 +38,8 @@ func logRelay(account string, headers http.Header, body []byte) {
 // logUpstreamError logs a non-2xx upstream response body (truncated) so native
 // failures (e.g. 400 invalid_request) are diagnosable. Gated like logRelay.
 func logUpstreamError(status int, body []byte) {
-	if v := os.Getenv("MERIDIAN_NATIVE_DEBUG"); v == "0" || v == "false" {
+	v := os.Getenv("MERIDIAN_NATIVE_DEBUG")
+	if v != "1" && v != "true" {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[native-egress] upstream_non2xx status=%d body=%s\n", status, body)

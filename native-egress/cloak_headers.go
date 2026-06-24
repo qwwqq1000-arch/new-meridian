@@ -26,22 +26,16 @@ func unionAnthropicBeta(lists ...string) string {
 	return strings.Join(out, ",")
 }
 
-// featureBetas are request-enabling betas that a simple `claude -p hi` capture
-// doesn't carry and that gateways (e.g. new-api) strip from the client request.
-// They only take effect when the body actually uses the feature, so it's safe to
-// always advertise them — mirrors CPA, which sends a comprehensive beta superset.
-// structured-outputs is required for structured/JSON-schema output requests.
-const featureBetas = "structured-outputs-2025-12-15"
-
 func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stream bool, clientBeta string) http.Header {
 	h := http.Header{}
 	for k, v := range fp {
 		h.Set(k, v)
 	}
-	// Union: capture baseline + always-on feature betas + the client's request
-	// betas. Overwriting with only the capture would drop request-specific flags
-	// like structured-outputs and Anthropic would 400.
-	if beta := unionAnthropicBeta(h.Get("anthropic-beta"), featureBetas, clientBeta); beta != "" {
+	// Union: capture baseline + the client's request-specific betas.
+	// No forced injection — real CC only sends betas the SDK explicitly needs
+	// for that request. Client-side (X-Native-Anthropic-Beta) carries anything
+	// the request body actually requires (e.g. structured-outputs).
+	if beta := unionAnthropicBeta(h.Get("anthropic-beta"), clientBeta); beta != "" {
 		h.Set("anthropic-beta", beta)
 	}
 	h.Set("authorization", "Bearer "+token)
@@ -49,11 +43,6 @@ func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stre
 	h.Set("x-stainless-retry-count", "0")
 	h.Set("x-claude-code-session-id", sessionID)
 	h.Set("x-client-request-id", clientRequestID)
-	h.Set("connection", "keep-alive")
-	// Always request identity encoding so upstream never compresses the body.
-	// This avoids double-decode on the non-stream path (undici already decompresses)
-	// and keeps the stream path consistent.
-	h.Set("accept-encoding", "identity")
 	if stream {
 		h.Set("accept", "text/event-stream")
 	} else {

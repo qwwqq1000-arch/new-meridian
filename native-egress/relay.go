@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,29 +13,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// RelayDeps holds injectable dependencies for relayHandler, enabling unit tests
-// to supply fake transports, fingerprint caches, and clocks.
 type RelayDeps struct {
-	Transport http.RoundTripper
-	FP        *FPCache
-	SessionID func(account string) string
-	Now       func() time.Time
+	Transport    http.RoundTripper
+	FP           *FPCache
+	BodyTemplate *BodyTemplateCache
+	SessionID    func(account string) string
+	Now          func() time.Time
+	Datadog      *DatadogEmitter
 }
 
-// relayHandler returns the POST /relay handler.
-//
-// The request body IS the verbatim client body (the exact bytes Meridian
-// received). Metadata travels in headers so the body is NEVER re-serialized in
-// transit — re-marshaling corrupts the cryptographic `signature` on assistant
-// `thinking` blocks, which Anthropic then rejects ("thinking blocks ... cannot
-// be modified"). Flow:
-//  1. Read raw body + metadata headers
-//  2. ReadToken (degrade if unavailable)
-//  3. FP.Get (degrade if unavailable)
-//  4. CloakBody (verbatim for genuine CC; surgical only when faking)
-//  5. BuildHeaders → forward → non-2xx degrade, else stream back
 func relayHandler(d RelayDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		relayStart := time.Now()
 		rawBody, err := io.ReadAll(r.Body)
 		if err != nil || len(rawBody) == 0 {
 			degrade(w, "bad_request")
@@ -56,9 +47,47 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
-		cloaked, err := CloakBody(rawBody, "user_"+account)
+		fpVersion := ExtractVersionFromUA(fp["user-agent"])
+		fpBetas := fp["anthropic-beta"]
+		fpNodeVer := fp["x-stainless-runtime-version"]
+
+		// Determine if this is a genuine CC request or a bare user request.
+		var cloaked []byte
+		isCC := bodyHasClaudeIdentity(rawBody)
+
+		if isCC {
+			// Genuine CC — passthrough (surgical only). Also learn the template.
+			cloaked, err = CloakBody(rawBody, deriveUserID(account))
+			if d.BodyTemplate != nil {
+				d.BodyTemplate.LearnFromCC(rawBody, fpVersion, fpBetas, fpNodeVer)
+			}
+		} else {
+			// Bare user request — merge with template if available.
+			tmpl := d.BodyTemplate.Get()
+			if tmpl != nil {
+				cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account))
+			} else {
+				cloaked, err = CloakBody(rawBody, deriveUserID(account))
+			}
+		}
 		if err != nil {
-			degrade(w, "cloak_error")
+			if errors.Is(err, ErrCCBodyConflict) {
+				// CC body had unfixable conflicts — re-marshal would corrupt
+				// signatures and SDK fallback can't fix either. Pre-validate
+				// the raw body to give user a clear error message.
+				if reason := ValidateBody(rawBody); reason != "" {
+					rejectBody(w, reason)
+				} else {
+					rejectBody(w, "request body has parameter conflicts that cannot be fixed without corrupting thinking signatures")
+				}
+			} else {
+				degrade(w, "cloak_error")
+			}
+			return
+		}
+
+		if reason := ValidateBody(cloaked); reason != "" {
+			rejectBody(w, reason)
 			return
 		}
 
@@ -80,7 +109,6 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		// non-2xx → degrade so Node falls back to SDK
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 			logUpstreamError(resp.StatusCode, errBody)
@@ -88,10 +116,9 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
+		requestID := resp.Header.Get("Request-Id")
+
 		for k, vs := range resp.Header {
-			// Skip content-encoding and content-length: we always send
-			// identity-encoded bodies and let the Node HTTP layer handle framing.
-			// Forwarding these would cause double-decode or length mismatches.
 			kl := strings.ToLower(k)
 			if kl == "content-encoding" || kl == "content-length" {
 				continue
@@ -103,6 +130,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		w.WriteHeader(resp.StatusCode)
 		rc := http.NewResponseController(w)
 		buf := make([]byte, 16*1024)
+		var respCapture bytes.Buffer
 		for {
 			n, rerr := resp.Body.Read(buf)
 			if n > 0 {
@@ -110,25 +138,103 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 					break
 				}
 				_ = rc.Flush()
+				if respCapture.Len() < 32*1024 {
+					respCapture.Write(buf[:n])
+				}
 			}
 			if rerr != nil {
 				break
 			}
 		}
+
+		if d.Datadog != nil {
+			relayDuration := time.Since(relayStart).Milliseconds()
+			model := extractModel(rawBody)
+			input, output, cached, stopReason, toolCount := extractResponseMeta(respCapture.Bytes())
+			d.Datadog.EmitAfterRelay(d.SessionID(account), model, requestID, stopReason,
+				input, output, cached, toolCount, relayDuration, len(rawBody))
+		}
 	}
 }
 
-// degrade signals to the caller (Node proxy) that this request should be
-// handled via the fallback SDK path. It always returns HTTP 200 with
-// X-Degrade: 1 so that network errors are distinguishable from intentional
-// degradation.
+func bodyHasClaudeIdentity(raw []byte) bool {
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil {
+		return false
+	}
+	return hasClaudeIdentity(body["system"])
+}
+
 func degrade(w http.ResponseWriter, reason string) {
 	w.Header().Set("X-Degrade", "1")
 	w.Header().Set("X-Degrade-Reason", reason)
 	w.WriteHeader(200)
 }
 
-// bytesReader wraps a byte slice in an io.ReadCloser, reusing bytes.NewReader.
+// rejectBody returns a 400 in Anthropic error format without hitting the API.
+func rejectBody(w http.ResponseWriter, message string) {
+	logDD("pre-validate reject: %s", message)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	resp := map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"message": message,
+		},
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
 func bytesReader(b []byte) io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(b))
+}
+
+func extractModel(body []byte) string {
+	var m struct{ Model string `json:"model"` }
+	if json.Unmarshal(body, &m) == nil && m.Model != "" {
+		return m.Model
+	}
+	return "claude-sonnet-4-6"
+}
+
+func extractResponseMeta(respData []byte) (input, output, cached int, stopReason string, toolCount int) {
+	var msg struct {
+		Usage struct {
+			InputTokens          int `json:"input_tokens"`
+			OutputTokens         int `json:"output_tokens"`
+			CacheReadInputTokens int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
+			Type string `json:"type"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(respData, &msg) == nil && msg.Usage.InputTokens > 0 {
+		for _, c := range msg.Content {
+			if c.Type == "tool_use" {
+				toolCount++
+			}
+		}
+		return msg.Usage.InputTokens, msg.Usage.OutputTokens, msg.Usage.CacheReadInputTokens, msg.StopReason, toolCount
+	}
+	for _, line := range bytes.Split(respData, []byte("\n")) {
+		line = bytes.TrimPrefix(line, []byte("data: "))
+		if json.Unmarshal(line, &msg) == nil {
+			if msg.Usage.InputTokens > 0 {
+				input = msg.Usage.InputTokens
+				output = msg.Usage.OutputTokens
+				cached = msg.Usage.CacheReadInputTokens
+			}
+			if msg.StopReason != "" {
+				stopReason = msg.StopReason
+			}
+			for _, c := range msg.Content {
+				if c.Type == "tool_use" {
+					toolCount++
+				}
+			}
+		}
+	}
+	return
 }

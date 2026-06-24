@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/tidwall/gjson"
 )
 
 func TestCloakBodyInjectsIdentityAndUserID(t *testing.T) {
@@ -79,31 +77,31 @@ func TestCloakBodyPreserves1hCacheTTL(t *testing.T) {
 }
 
 func TestCloakBodyInjectsDefault5mWhenNoCacheControl(t *testing.T) {
+	// CC bodies are returned verbatim even without cache_control to avoid
+	// re-marshaling (which corrupts thinking block signatures).
 	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}],"messages":[]}`)
 	out, _ := CloakBody(raw, "u")
-	cc := gjson.GetBytes(out, "system.0.cache_control")
-	if !cc.Exists() {
-		t.Fatalf("expected default cache_control injected, got: %s", out)
-	}
-	if cc.Get("type").String() != "ephemeral" || cc.Get("ttl").Exists() {
-		t.Fatalf("default must be ephemeral with no ttl (=5m), got: %s", cc.Raw)
+	if string(out) != string(raw) {
+		t.Fatalf("CC body without cache_control must be returned verbatim.\n got: %s", out)
 	}
 }
 
 func TestCloakBodyDropsThinkingWhenToolChoiceForced(t *testing.T) {
 	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled"},"tool_choice":{"type":"tool","name":"x"},"tools":[{"name":"x"}],"messages":[]}`)
 	out, _ := CloakBody(raw, "u")
-	if gjson.GetBytes(out, "thinking").Exists() {
+	var m map[string]any
+	_ = json.Unmarshal(out, &m)
+	if m["thinking"] != nil {
 		t.Fatalf("thinking config must be dropped when tool_choice forces a tool: %s", out)
 	}
 }
 
 func TestCloakBodyDropsThinkingOnFakingPath(t *testing.T) {
-	// non-CC body (no CC identity) → faking path; thinking must still be dropped
-	// when tool_choice forces a tool (this is the structured-output case).
 	raw := []byte(`{"system":[{"type":"text","text":"You are a helper."}],"thinking":{"type":"enabled"},"tool_choice":{"type":"tool","name":"x"},"tools":[{"name":"x"}],"messages":[]}`)
 	out, _ := CloakBody(raw, "u")
-	if gjson.GetBytes(out, "thinking").Exists() {
+	var m map[string]any
+	_ = json.Unmarshal(out, &m)
+	if m["thinking"] != nil {
 		t.Fatalf("thinking must be dropped on the faking path too: %s", out)
 	}
 }
@@ -111,7 +109,9 @@ func TestCloakBodyDropsThinkingOnFakingPath(t *testing.T) {
 func TestCloakBodyKeepsThinkingWhenToolChoiceAuto(t *testing.T) {
 	raw := []byte(`{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled"},"tool_choice":{"type":"auto"},"messages":[]}`)
 	out, _ := CloakBody(raw, "u")
-	if !gjson.GetBytes(out, "thinking").Exists() {
+	var m map[string]any
+	_ = json.Unmarshal(out, &m)
+	if m["thinking"] == nil {
 		t.Fatalf("thinking must be kept when tool_choice is auto: %s", out)
 	}
 }

@@ -211,17 +211,25 @@ export function testProxy(p: ParsedProxy, timeoutMs = 12000): Promise<ProxyTestR
  * meridian process env — route their outbound traffic through it.
  */
 export function applyProxyEnv(url: string | undefined): void {
-  // ONLY ALL_PROXY/all_proxy. golang.org/x/net/proxy (the native-egress sidecar)
-  // reads these and supports socks5. We deliberately DO NOT set HTTP(S)_PROXY:
-  // undici — used by meridian's own Node fetches (quota / oauth-usage / token
-  // refresh) and by claude.exe — reads those and cannot speak socks5, so a
-  // socks5 value there breaks every Node-side request (the dashboard quota stops
-  // loading). Always strip any stale HTTP(S)_PROXY we may have set before.
-  for (const n of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) delete process.env[n]
-  const names = ["ALL_PROXY", "all_proxy"]
+  const allNames = ["ALL_PROXY", "all_proxy"]
+  const httpNames = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
   if (url && url.trim()) {
-    for (const n of names) process.env[n] = url
+    for (const n of allNames) process.env[n] = url
+    // For HTTP/HTTPS proxies, also set HTTP(S)_PROXY so Node's undici (token
+    // refresh, oauth-usage) routes through the same proxy. Without this, token
+    // refreshes use the host IP while API messages use the proxy IP — the IP
+    // mismatch is a ban signal.
+    // SOCKS5 proxies: undici cannot speak socks5, so we only set ALL_PROXY
+    // (which the Go sidecar reads). Node-side fetches bypass the proxy — an
+    // accepted limitation until a local socks5-to-http bridge is added.
+    const isSocks = /^socks5/i.test(url)
+    if (isSocks) {
+      for (const n of httpNames) delete process.env[n]
+    } else {
+      for (const n of httpNames) process.env[n] = url
+    }
   } else {
-    for (const n of names) delete process.env[n]
+    for (const n of allNames) delete process.env[n]
+    for (const n of httpNames) delete process.env[n]
   }
 }
