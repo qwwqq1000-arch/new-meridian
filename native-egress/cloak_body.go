@@ -276,7 +276,7 @@ func fixInvalidEffort(body map[string]any) bool {
 	}
 	effort, _ := oc["effort"].(string)
 	switch effort {
-	case "", "low", "medium", "high", "max":
+	case "", "low", "medium", "high", "xhigh", "max":
 		return false
 	default:
 		delete(oc, "effort")
@@ -524,7 +524,7 @@ func ValidateBody(cloaked []byte) string {
 	if oc, ok := body["output_config"].(map[string]any); ok {
 		if effort, ok := oc["effort"].(string); ok && effort != "" {
 			switch effort {
-			case "low", "medium", "high", "max":
+			case "low", "medium", "high", "xhigh", "max":
 			default:
 				return "Unsupported effort level '" + effort + "'. Supported: low, medium, high, max."
 			}
