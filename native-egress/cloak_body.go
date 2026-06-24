@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -569,6 +570,15 @@ func ValidateBody(cloaked []byte) string {
 			}
 			if block["type"] == "thinking" && role != "assistant" {
 				return "messages." + itoa(mi) + ".content: thinking blocks may only be in `assistant` messages"
+			}
+			if block["type"] == "thinking" && role == "assistant" {
+				sig, _ := block["signature"].(string)
+				if sig == "" {
+					return "messages." + itoa(mi) + ".content." + itoa(ci) + ": Missing `signature` in `thinking` block"
+				}
+				if _, err := base64.StdEncoding.DecodeString(sig); err != nil {
+					return "messages." + itoa(mi) + ".content." + itoa(ci) + ": Invalid `signature` in `thinking` block"
+				}
 			}
 			if block["type"] == "text" {
 				if text, ok := block["text"].(string); ok && text == "" {
