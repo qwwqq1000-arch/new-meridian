@@ -488,10 +488,12 @@ func forceStreamTrue(raw []byte) []byte {
 	return bytes.Replace(raw, []byte(`"stream":false`), []byte(`"stream":true `), 1)
 }
 
-// fixEffortXhighBytes replaces "xhigh" with "high" in the effort field at the
-// byte level. "xhigh" is a CC-internal value the API rejects.
+// fixEffortXhighBytes replaces the effort field's "xhigh" value with "high" at
+// the byte level. Uses key-value pattern to avoid replacing "xhigh" in message text.
+var effortXhighRe = regexp.MustCompile(`"effort"\s*:\s*"xhigh"`)
+
 func fixEffortXhighBytes(raw []byte) []byte {
-	return bytes.Replace(raw, []byte(`"xhigh"`), []byte(`"high"`), 1)
+	return effortXhighRe.ReplaceAll(raw, []byte(`"effort":"high"`))
 }
 
 // ValidateBody checks the cloaked body for conditions that will definitely be
