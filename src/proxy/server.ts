@@ -940,9 +940,12 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               nativeCb.recordSuccess()
               claudeLog("relay.native", { adapter: adapter.name, profile: profile.id })
               diagnosticLog.session(`${requestMeta.requestId} relay=native`, requestMeta.requestId)
+              const nativeTtfb = r.response!.headers.get("X-Upstream-TTFB-Ms")
+              const nativeTtfbMs = nativeTtfb ? parseInt(nativeTtfb, 10) : null
+              const nativeNow = Date.now()
               telemetryStore.record({
                 requestId: requestMeta.requestId,
-                timestamp: Date.now(),
+                timestamp: nativeNow,
                 adapter: adapter.name,
                 requestSource,
                 model,
@@ -957,9 +960,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                 status: 200,
                 queueWaitMs: requestMeta.queueStartedAt - requestMeta.queueEnteredAt,
                 proxyOverheadMs: 0,
-                ttfbMs: null,
-                upstreamDurationMs: 0,
-                totalDurationMs: Date.now() - requestStartAt,
+                ttfbMs: nativeTtfbMs,
+                upstreamDurationMs: nativeNow - requestStartAt,
+                totalDurationMs: nativeNow - requestStartAt,
                 contentBlocks: 0,
                 textEvents: 0,
                 error: null,

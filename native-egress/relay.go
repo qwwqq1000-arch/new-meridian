@@ -118,6 +118,8 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 
 		requestID := resp.Header.Get("Request-Id")
+		// Track upstream TTFB: time from relay start to first upstream byte.
+		upstreamTTFB := time.Since(relayStart).Milliseconds()
 
 		if !stream {
 			// Client wants non-streaming: read full SSE, assemble final Message JSON.
@@ -127,6 +129,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Upstream-TTFB-Ms", fmt.Sprintf("%d", upstreamTTFB))
 			if requestID != "" {
 				w.Header().Set("Request-Id", requestID)
 			}
@@ -153,6 +156,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 				w.Header().Add(k, v)
 			}
 		}
+		w.Header().Set("X-Upstream-TTFB-Ms", fmt.Sprintf("%d", upstreamTTFB))
 		w.WriteHeader(resp.StatusCode)
 		rc := http.NewResponseController(w)
 		buf := make([]byte, 16*1024)
