@@ -69,20 +69,14 @@ func CloakBody(raw []byte, userID string) ([]byte, error) {
 	metaDirty := sanitizeMetadata(body, userID)
 
 	if hasClaudeIdentity(body["system"]) {
-		// CC body — cannot re-marshal (would corrupt thinking signatures).
-		// Apply byte-level surgical fixes instead.
-		onlyByteFixable := !c1 && !c2 // c1/c2 are structural conflicts; c3 (effort) and metaDirty are byte-fixable
-		if (changed || metaDirty) && !onlyByteFixable {
+		if changed || metaDirty {
+			if metaDirty && !changed {
+				stripped := stripMetadataPadBytes(raw)
+				return forceStreamTrue(stripped), nil
+			}
 			return nil, ErrCCBodyConflict
 		}
-		result := raw
-		if metaDirty {
-			result = stripMetadataPadBytes(result)
-		}
-		if c3 {
-			result = fixEffortXhighBytes(result)
-		}
-		return forceStreamTrue(result), nil
+		return forceStreamTrue(raw), nil
 	}
 
 	fillDefaults(body)
@@ -272,8 +266,7 @@ func fixThinkingContextConflicts(body map[string]any) bool {
 	return changed
 }
 
-// fixInvalidEffort maps or removes unrecognized effort values.
-// "xhigh" is a CC-internal value the API rejects; map it to "high".
+// fixInvalidEffort removes unrecognized effort values.
 func fixInvalidEffort(body map[string]any) bool {
 	oc, _ := body["output_config"].(map[string]any)
 	if oc == nil {
@@ -281,11 +274,8 @@ func fixInvalidEffort(body map[string]any) bool {
 	}
 	effort, _ := oc["effort"].(string)
 	switch effort {
-	case "", "low", "medium", "high", "max":
+	case "", "low", "medium", "high", "xhigh", "max":
 		return false
-	case "xhigh":
-		oc["effort"] = "high"
-		return true
 	default:
 		delete(oc, "effort")
 		return true
@@ -488,13 +478,7 @@ func forceStreamTrue(raw []byte) []byte {
 	return bytes.Replace(raw, []byte(`"stream":false`), []byte(`"stream":true `), 1)
 }
 
-// fixEffortXhighBytes replaces the effort field's "xhigh" value with "high" at
-// the byte level. Uses key-value pattern to avoid replacing "xhigh" in message text.
-var effortXhighRe = regexp.MustCompile(`"effort"\s*:\s*"xhigh"`)
 
-func fixEffortXhighBytes(raw []byte) []byte {
-	return effortXhighRe.ReplaceAll(raw, []byte(`"effort":"high"`))
-}
 
 // ValidateBody checks the cloaked body for conditions that will definitely be
 // rejected by the API. Returns a non-empty error message if the request should
@@ -547,9 +531,9 @@ func ValidateBody(cloaked []byte) string {
 	if oc, ok := body["output_config"].(map[string]any); ok {
 		if effort, ok := oc["effort"].(string); ok && effort != "" {
 			switch effort {
-			case "low", "medium", "high", "max":
+			case "low", "medium", "high", "xhigh", "max":
 			default:
-				return "Unsupported effort level '" + effort + "'. Supported: low, medium, high, max."
+				return "Unsupported effort level '" + effort + "'. Supported: low, medium, high, xhigh, max."
 			}
 		}
 	}
