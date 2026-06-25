@@ -1,5 +1,46 @@
 # Changelog
 
+## [fork] native-egress 修复与增强 (2026-06-24)
+
+以下为 fork 分支（new-meridian）针对 native-egress sidecar 的修复，不在上游版本号体系内。
+
+### Bug Fixes — 400 错误
+
+* **native-egress:** xhigh effort 导致 upstream 400（`Unsupported effort level 'xhigh'`）
+  — SDK 内部的 xhigh 不是合法 API 参数。两条泄漏路径：① CC body verbatim 路径原样发送；② `LearnFromCC` 把 xhigh 存入 body template cache，所有 `MergeUserRequest` 的非 CC 请求都继承了 xhigh。
+  修复：`fixInvalidEffort()` 映射 xhigh→high；CC body 用 byte-level 正则替换；template cache 存入时净化。
+  (`b1d9d34`, `ca44ece`)
+
+* **native-egress:** clear_thinking 要求 thinking 开启（`` `clear_thinking_20251015` requires thinking to be enabled ``）
+  — `MergeUserRequest` 无条件从 CC template 复制 `context_management`（含 clear_thinking），但用户请求可能没开 thinking。
+  修复：仅在最终结果有 thinking 字段时才注入 context_management。
+  (`7e807d0`)
+
+* **native-egress:** Invalid signature in thinking block
+  — 用户端 SDK 发来的 thinking 签名密码学验证失败（密钥在 Anthropic 端，NE 无法本地验证）。
+  修复：① `ValidateBody` 加 base64 格式预校验，格式错误直接拦截；② upstream 400 不再 degrade 到 SDK passthrough（同样 body 重发还是被拒），改为直接透传 400 给客户端。
+  (`1b6bfda`, `9eb56b5`)
+
+### Bug Fixes — 遥测
+
+* **native-egress/server.ts:** token 遥测全部为 null
+  — NE native 成功路径没有把 usage 数据传回 meridian，meridian 硬编码 undefined。
+  修复：NE 非流式路径从 assembled JSON 提取 usage，通过 `X-Usage-Input`/`X-Usage-Output`/`X-Usage-Cache-Read`/`X-Usage-Cache-Creation` 响应头传回；meridian 读取写入遥测。同时修复 `extractResponseMeta` 在 prompt caching 命中（`input_tokens=0, cache_read>0`）时不提取的问题。
+  (`4244efa`)
+
+* **native-egress:** sse_assemble_error 无诊断日志
+  — SSE 组装失败时直接 degrade，没有记录具体错误原因。
+  修复：增加 `logDD("sse_assemble_error: %v", err)` 日志。
+  (`9eb56b5`)
+
+### Features
+
+* **deploy:** 新增 `deploy/` 目录，一条命令装机
+  — `setup.sh <API_KEY> <EGRESS_PROXY>` 自动安装 bun/go、克隆代码、编译 NE、写入 per-node 配置、启动服务。模板文件 `env.template` 和 `settings.json` 确保所有节点配置一致。
+  (`f9d2b0f`)
+
+---
+
 ## [1.44.0](https://github.com/rynfar/meridian/compare/meridian-v1.43.0...meridian-v1.44.0) (2026-06-16)
 
 
