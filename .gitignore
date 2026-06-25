@@ -42,6 +42,10 @@ native-egress/native-egress
 native-egress/tls_test
 native-egress/tls_test_main.go
 
+# cc-hook build artifacts and logs
+tools/cc-hook/cc-hook
+tools/cc-hook/cc-hook-logs/
+
 # Local agent tooling (per-developer; never commit)
 .claude/
 .pylon/
