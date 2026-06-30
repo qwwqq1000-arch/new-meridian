@@ -178,7 +178,7 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 
 	// FROM USER: only model, messages, max_tokens, tool_choice
 	result["model"] = user["model"]
-	result["messages"] = user["messages"]
+	result["messages"] = stripEmptyTextBlocks(user["messages"])
 
 	if tc, ok := user["tool_choice"]; ok {
 		result["tool_choice"] = tc
@@ -222,6 +222,41 @@ func mergeUserSystem(sys any) []any {
 		return v
 	}
 	return nil
+}
+
+// stripEmptyTextBlocks removes {"type":"text","text":""} from message content
+// arrays. Some clients send these as placeholders; the API rejects them.
+func stripEmptyTextBlocks(msgs any) any {
+	arr, _ := msgs.([]any)
+	if arr == nil {
+		return msgs
+	}
+	for _, m := range arr {
+		mm, _ := m.(map[string]any)
+		if mm == nil {
+			continue
+		}
+		content, _ := mm["content"].([]any)
+		if content == nil {
+			continue
+		}
+		filtered := content[:0]
+		for _, c := range content {
+			block, _ := c.(map[string]any)
+			if block != nil && block["type"] == "text" {
+				text, _ := block["text"].(string)
+				if text == "" {
+					continue
+				}
+			}
+			filtered = append(filtered, c)
+		}
+		if len(filtered) == 0 && len(content) > 0 {
+			filtered = append(filtered, map[string]any{"type": "text", "text": "."})
+		}
+		mm["content"] = filtered
+	}
+	return msgs
 }
 
 // ExtractVersionFromUA parses version from "claude-cli/2.1.187 (...)" user-agent.

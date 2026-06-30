@@ -588,7 +588,8 @@ func ValidateBody(cloaked []byte) string {
 			}
 			if block["type"] == "text" {
 				if text, ok := block["text"].(string); ok && text == "" {
-					return "messages." + itoa(mi) + ".content." + itoa(ci) + ": text content blocks must be non-empty"
+					// Stripped upstream by stripEmptyTextBlocks; log if one slips through.
+					logDD("warn: empty text block at messages.%s.content.%s (should have been stripped)", itoa(mi), itoa(ci))
 				}
 			}
 		}
