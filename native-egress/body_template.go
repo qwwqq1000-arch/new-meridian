@@ -148,10 +148,28 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	}
 	result["metadata"] = map[string]any{"user_id": userID}
 
-	// Tools: CC template tools ONLY. User tools are dropped to match real CC
-	// fingerprint (real CC has a fixed set of ~10 tools).
+	// Tools: CC template tools as base, user tools appended (dedup by name).
+	// Real CC tool count varies (base ~10, plus ToolSearch-loaded + MCP tools).
 	if len(tmpl.Tools) > 0 {
-		result["tools"] = tmpl.Tools
+		tmplNames := make(map[string]bool, len(tmpl.Tools))
+		for _, t := range tmpl.Tools {
+			if tm, ok := t.(map[string]any); ok {
+				if n, ok := tm["name"].(string); ok {
+					tmplNames[n] = true
+				}
+			}
+		}
+		merged := append([]any{}, tmpl.Tools...)
+		if userTools, ok := user["tools"].([]any); ok {
+			for _, t := range userTools {
+				if tm, ok := t.(map[string]any); ok {
+					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
+						merged = append(merged, t)
+					}
+				}
+			}
+		}
+		result["tools"] = merged
 	}
 
 	// FROM USER: only model, messages, max_tokens, tool_choice, temperature
