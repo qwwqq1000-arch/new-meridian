@@ -124,6 +124,73 @@ data: {"type":"message_stop"}
 	}
 }
 
+func TestAssembleSSETruncated(t *testing.T) {
+	// Stream cut off after some content but before message_stop
+	sse := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_trunc","type":"message","role":"assistant","content":[],"model":"claude-opus-4-6","stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial output"}}
+
+`
+	result, err := assembleSSEToMessage(strings.NewReader(sse))
+	if err != nil {
+		t.Fatalf("expected no error for partial message, got: %v", err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(result, &msg); err != nil {
+		t.Fatalf("invalid JSON: %s", err)
+	}
+	if msg["stop_reason"] != "truncated" {
+		t.Fatalf("expected stop_reason=truncated, got: %v", msg["stop_reason"])
+	}
+	content, _ := msg["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content blocks: %d", len(content))
+	}
+	block, _ := content[0].(map[string]any)
+	if block["text"] != "partial output" {
+		t.Fatalf("text: %q", block["text"])
+	}
+}
+
+func TestAssembleSSEUpstreamError(t *testing.T) {
+	// Upstream sends error event instead of message
+	sse := `event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
+`
+	result, err := assembleSSEToMessage(strings.NewReader(sse))
+	if err == nil {
+		t.Fatal("expected error for upstream SSE error")
+	}
+	if result == nil {
+		t.Fatal("expected error bytes to be returned")
+	}
+	var errMsg map[string]any
+	if err := json.Unmarshal(result, &errMsg); err != nil {
+		t.Fatalf("invalid error JSON: %s", err)
+	}
+	errObj, _ := errMsg["error"].(map[string]any)
+	if errObj["type"] != "overloaded_error" {
+		t.Fatalf("error type: %v", errObj["type"])
+	}
+}
+
+func TestAssembleSSEEmptyStream(t *testing.T) {
+	// Completely empty stream
+	result, err := assembleSSEToMessage(strings.NewReader(""))
+	if err == nil {
+		t.Fatal("expected error for empty stream")
+	}
+	if result != nil {
+		t.Fatal("expected nil result for empty stream")
+	}
+}
+
 func TestForceStreamTrue(t *testing.T) {
 	body := []byte(`{"model":"x","stream":false,"messages":[]}`)
 	result := forceStreamTrue(body)

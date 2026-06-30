@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -18,6 +19,8 @@ func assembleSSEToMessage(r io.Reader) ([]byte, error) {
 	var msg map[string]any
 	var contentBlocks []any
 	var usage map[string]any
+	var lastSSEError []byte
+	gotStop := false
 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 512*1024), 2*1024*1024)
@@ -36,6 +39,9 @@ func assembleSSEToMessage(r io.Reader) ([]byte, error) {
 		data := []byte(strings.TrimPrefix(line, "data: "))
 
 		switch eventType {
+		case "error":
+			lastSSEError = append([]byte(nil), data...)
+
 		case "message_start":
 			var envelope struct {
 				Message map[string]any `json:"message"`
@@ -103,30 +109,40 @@ func assembleSSEToMessage(r io.Reader) ([]byte, error) {
 			}
 
 		case "message_stop":
-			// final event
+			gotStop = true
 		}
 	}
 
-	if msg == nil {
-		return nil, io.ErrUnexpectedEOF
+	// Got message_start — return whatever we assembled, even if truncated.
+	if msg != nil {
+		if !gotStop {
+			if sr, _ := msg["stop_reason"].(string); sr == "" {
+				msg["stop_reason"] = "truncated"
+			}
+		}
+		msg["content"] = contentBlocks
+		if usage != nil {
+			msg["usage"] = usage
+		}
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(msg); err != nil {
+			return nil, err
+		}
+		b := buf.Bytes()
+		if len(b) > 0 && b[len(b)-1] == '\n' {
+			b = b[:len(b)-1]
+		}
+		return b, nil
 	}
 
-	msg["content"] = contentBlocks
-	if usage != nil {
-		msg["usage"] = usage
+	// No message_start but got an upstream error event — return error bytes.
+	if lastSSEError != nil {
+		return lastSSEError, fmt.Errorf("upstream SSE error")
 	}
 
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(msg); err != nil {
-		return nil, err
-	}
-	b := buf.Bytes()
-	if len(b) > 0 && b[len(b)-1] == '\n' {
-		b = b[:len(b)-1]
-	}
-	return b, nil
+	return nil, io.ErrUnexpectedEOF
 }
 
 func applyDelta(block, delta map[string]any) {

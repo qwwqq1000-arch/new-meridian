@@ -103,7 +103,11 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 				logDD("sse_assemble_error: %v", assembleErr)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(502)
-				fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"SSE assembly failed: %s"}}`, assembleErr.Error())
+				if assembled != nil {
+					w.Write(assembled)
+				} else {
+					fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"SSE assembly failed: %s"}}`, assembleErr.Error())
+				}
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
