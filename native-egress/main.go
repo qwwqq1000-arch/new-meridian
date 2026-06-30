@@ -43,6 +43,8 @@ func newServer() http.Handler {
 	bodyTmpl := NewBodyTemplateCache(10 * time.Minute)
 	transport := NewUTLSTransport()
 
+	go warmupTemplate(claudePath, configDir, fpCache, bodyTmpl)
+
 	deps := RelayDeps{
 		Transport:    transport,
 		FP:           fpCache,
