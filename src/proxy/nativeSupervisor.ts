@@ -160,7 +160,8 @@ export class NativeSupervisor {
     })
 
     child.stderr?.on("data", (chunk: Buffer) => {
-      claudeLog(`[native-egress] ${chunk.toString().trimEnd()}`)
+      const msg = chunk.toString().trimEnd()
+      if (msg) console.error(msg)
     })
 
     child.on("exit", (code, signal) => {
