@@ -2,11 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 )
+
+func warmupLog(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "[native-egress] "+format+"\n", args...)
+}
 
 // warmupPreloadJS intercepts globalThis.fetch inside the CC CLI process and
 // writes the first large POST /v1/messages body (>10 KB = the main sonnet
@@ -31,7 +36,7 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 
 	os.Remove(bodyPath)
 	if err := os.WriteFile(preloadPath, []byte(warmupPreloadJS), 0644); err != nil {
-		logDD("warmup: write preload: %v", err)
+		warmupLog("warmup: write preload: %v", err)
 		return
 	}
 	defer os.Remove(preloadPath)
@@ -50,11 +55,15 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 		"_NE_BODY_PATH="+bodyPath,
 	)
 
-	out, _ := cmd.CombinedOutput()
+	warmupLog("warmup: running %s -p hi ...", claudePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		warmupLog("warmup: claude exited with error: %v (output: %d bytes)", err, len(out))
+	}
 
 	fp, ok := ParseFingerprint(string(out))
 	if !ok {
-		logDD("warmup: fingerprint parse failed (CC not logged in?)")
+		warmupLog("warmup: fingerprint parse failed (CC not logged in?)")
 		return
 	}
 
@@ -65,16 +74,16 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 	fpVersion := ExtractVersionFromUA(fp["user-agent"])
 	fpBetas := fp["anthropic-beta"]
 	fpNodeVer := fp["x-stainless-runtime-version"]
-	logDD("warmup: fingerprint learned (CC %s, node %s)", fpVersion, fpNodeVer)
+	warmupLog("warmup: fingerprint learned (CC %s, node %s)", fpVersion, fpNodeVer)
 
 	bodyData, err := os.ReadFile(bodyPath)
 	if err != nil || len(bodyData) == 0 {
-		logDD("warmup: body dump not found (CC binary may not support NODE_OPTIONS)")
+		warmupLog("warmup: body dump not found (CC binary may not support NODE_OPTIONS)")
 		return
 	}
 
 	btCache.LearnFromCC(bodyData, fpVersion, fpBetas, fpNodeVer)
-	logDD("warmup: body template learned (%d bytes, %d tools) in %s",
+	warmupLog("warmup: body template learned (%d bytes, %d tools) in %s",
 		len(bodyData), countTemplateTools(bodyData), time.Since(start).Round(time.Millisecond))
 }
 
