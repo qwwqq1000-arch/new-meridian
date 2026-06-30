@@ -874,7 +874,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // anti-forgery reject can fall through to the SDK path below.
       const { getSetting: getNativeSetting } = require("./settings") as typeof import("./settings")
       if (nativeEligible({
-        featureNativeForward: getNativeSetting("nativeForward") === true || sdkFeatures.nativeForward,
+        featureNativeForward: getNativeSetting("nativeForward") !== false || sdkFeatures.nativeForward,
         envForceNative: process.env.MERIDIAN_NATIVE_FORWARD === "1",
         clientForcedSdk: c.req.header("x-meridian-mode") === "sdk",
         profileType: profile.type,
@@ -883,7 +883,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         // requests whose body genuinely looks like Claude Code. A non-CC body
         // (which would risk the account if relayed under a CC fingerprint)
         // falls through to the normal SDK path instead.
-        const globalBodyCheck = getNativeSetting("nativeBodyCheck") !== false
+        const globalBodyCheck = getNativeSetting("nativeBodyCheck") === true
         const ccShape = inspectClaudeCodeShape(body)
         if (!globalBodyCheck || ccShape.ok) {
           const nativeBaseUrl = getNativeBaseUrl()
@@ -2628,8 +2628,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   app.get("/settings/api/native", (c) => {
     const { getSetting } = require("./settings") as typeof import("./settings")
     return c.json({
-      nativeForward: getSetting("nativeForward") === true,
-      nativeBodyCheck: getSetting("nativeBodyCheck") !== false,
+      nativeForward: getSetting("nativeForward") !== false,
+      nativeBodyCheck: getSetting("nativeBodyCheck") === true,
     })
   })
   app.patch("/settings/api/native", async (c) => {

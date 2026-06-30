@@ -152,7 +152,7 @@ const ADAPTER_LABELS = {
 };
 
 let currentConfig = {};
-let globalNative = { nativeForward: false, nativeBodyCheck: true };
+let globalNative = { nativeForward: true, nativeBodyCheck: false };
 
 async function loadGlobalNative() {
   const res = await fetch('/settings/api/native');

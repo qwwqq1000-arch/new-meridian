@@ -23,13 +23,13 @@ function makeApp() {
 describe("GET/PATCH /settings/api/native", () => {
   beforeEach(() => {
     // Reset to safe defaults before each test
-    setSetting("nativeForward", false)
-    setSetting("nativeBodyCheck", true)
+    setSetting("nativeForward", true)
+    setSetting("nativeBodyCheck", false)
   })
 
   afterEach(() => {
-    setSetting("nativeForward", false)
-    setSetting("nativeBodyCheck", true)
+    setSetting("nativeForward", true)
+    setSetting("nativeBodyCheck", false)
   })
 
   it("GET returns defaults when settings are at default", async () => {
@@ -37,8 +37,8 @@ describe("GET/PATCH /settings/api/native", () => {
     const res = await app.fetch(new Request("http://localhost/settings/api/native"))
     expect(res.status).toBe(200)
     const body = await res.json() as { nativeForward: boolean; nativeBodyCheck: boolean }
-    expect(body.nativeForward).toBe(false)
-    expect(body.nativeBodyCheck).toBe(true)
+    expect(body.nativeForward).toBe(true)
+    expect(body.nativeBodyCheck).toBe(false)
   })
 
   it("PATCH nativeForward=true persists and GET reflects it", async () => {

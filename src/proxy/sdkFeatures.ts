@@ -70,8 +70,8 @@ const DEFAULT_FEATURES: AdapterFeatures = {
   sdkDebug: false,
   additionalDirectories: "",
   relayMode: "auto",
-  nativeForward: false,
-  nativeBodyCheck: true,
+  nativeForward: true,
+  nativeBodyCheck: false,
 }
 
 /**
