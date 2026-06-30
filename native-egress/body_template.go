@@ -123,8 +123,15 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 
 	result := make(map[string]any, 16)
 
-	// FROM TEMPLATE (the real CLI structure)
-	result["system"] = tmpl.System
+	// System: CC template blocks first, then append user's system (like CLAUDE.md).
+	// Real CC builds all system blocks itself; user customization (CLAUDE.md) is
+	// embedded inside them. For relay users, their "system" field is equivalent
+	// to CLAUDE.md — append it as an extra block so it's not lost.
+	sysBlocks := append([]any{}, tmpl.System...)
+	if userSys := mergeUserSystem(user["system"]); len(userSys) > 0 {
+		sysBlocks = append(sysBlocks, userSys...)
+	}
+	result["system"] = sysBlocks
 	result["stream"] = tmpl.Stream
 	if tmpl.OutputConfig != nil {
 		result["output_config"] = tmpl.OutputConfig
@@ -137,11 +144,28 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	}
 	result["metadata"] = map[string]any{"user_id": userID}
 
-	// Use template tools as default, user tools override
-	if userTools, ok := user["tools"].([]any); ok && len(userTools) > 0 {
-		result["tools"] = userTools
-	} else if len(tmpl.Tools) > 0 {
-		result["tools"] = tmpl.Tools
+	// Merge: start with template CC tools, append any user-specific tools
+	// that aren't already in the template (e.g. custom function-calling tools).
+	if len(tmpl.Tools) > 0 {
+		tmplNames := make(map[string]bool, len(tmpl.Tools))
+		for _, t := range tmpl.Tools {
+			if tm, ok := t.(map[string]any); ok {
+				if n, ok := tm["name"].(string); ok {
+					tmplNames[n] = true
+				}
+			}
+		}
+		merged := append([]any{}, tmpl.Tools...)
+		if userTools, ok := user["tools"].([]any); ok {
+			for _, t := range userTools {
+				if tm, ok := t.(map[string]any); ok {
+					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
+						merged = append(merged, t)
+					}
+				}
+			}
+		}
+		result["tools"] = merged
 	}
 
 	// FROM USER (content + preferences)
@@ -181,6 +205,24 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	ensureCacheControl(result)
 
 	return marshalBody(result)
+}
+
+// mergeUserSystem converts the user's "system" field (string or block array)
+// into []any text blocks suitable for appending to the template system.
+func mergeUserSystem(sys any) []any {
+	switch v := sys.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []any{map[string]any{"type": "text", "text": v}}
+	case []any:
+		if len(v) == 0 {
+			return nil
+		}
+		return v
+	}
+	return nil
 }
 
 // ExtractVersionFromUA parses version from "claude-cli/2.1.187 (...)" user-agent.

@@ -62,8 +62,11 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 				d.BodyTemplate.LearnFromCC(rawBody, fpVersion, fpBetas, fpNodeVer)
 			}
 		} else {
-			// Bare user request — merge with template if available.
+			// Bare user request — merge with learned or builtin template.
 			tmpl := d.BodyTemplate.Get()
+			if tmpl == nil {
+				tmpl = builtinTemplate()
+			}
 			if tmpl != nil {
 				cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account))
 			} else {

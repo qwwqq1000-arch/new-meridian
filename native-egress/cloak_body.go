@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,11 +43,17 @@ const ClaudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Cl
 const ccIdentityPrefix = "You are Claude Code, Anthropic's official CLI for Claude"
 
 // deriveUserID produces a deterministic user_id that matches the real CC
-// format: "user-" + 28-char base32-like string (e.g. "user-2vS9cBh5DkNMq8wFcKfQ2s1hKgB").
+// format: a JSON-encoded object with device_id, account_uuid and session_id.
+// Real CC sends: {"device_id":"<sha256-hex>","account_uuid":"<uuid>","session_id":"<uuid>"}
+// We derive all three deterministically from the account name so the same
+// account always produces the same user_id.
 func deriveUserID(account string) string {
 	h := sha256.Sum256([]byte("meridian-uid:" + account))
-	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(h[:21])
-	return "user-" + enc[:28]
+	deviceID := fmt.Sprintf("%x", h)
+	accountUUID := fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
+	sessionH := sha256.Sum256([]byte("meridian-sid:" + account))
+	sessionID := fmt.Sprintf("%x-%x-%x-%x-%x", sessionH[0:4], sessionH[4:6], sessionH[6:8], sessionH[8:10], sessionH[10:16])
+	return `{"device_id":"` + deviceID + `","account_uuid":"` + accountUUID + `","session_id":"` + sessionID + `"}`
 }
 
 func CloakBody(raw []byte, userID string) ([]byte, error) {
