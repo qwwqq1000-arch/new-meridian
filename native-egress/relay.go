@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,8 +67,11 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
 		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), true, clientBeta)
 
-		upReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
+		ttfbCtx, ttfbCancel := context.WithTimeout(r.Context(), 15*time.Second)
+
+		upReq, err := http.NewRequestWithContext(ttfbCtx, "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {
+			ttfbCancel()
 			degrade(w, "build_request_error")
 			return
 		}
@@ -77,7 +81,14 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		logMergeSummary(account, cloaked)
 
 		resp, err := d.Transport.RoundTrip(upReq)
+		ttfbCancel() // TTFB received — cancel deadline so body streaming is unbounded
 		if err != nil {
+			if ttfbCtx.Err() == context.DeadlineExceeded {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(504)
+				fmt.Fprint(w, `{"type":"error","error":{"type":"timeout_error","message":"upstream TTFB exceeded 15s"}}`)
+				return
+			}
 			degrade(w, "upstream_error")
 			return
 		}
