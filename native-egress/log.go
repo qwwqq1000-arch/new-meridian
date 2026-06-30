@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,11 +37,54 @@ func logRelay(account string, headers http.Header, body []byte) {
 }
 
 // logUpstreamError logs a non-2xx upstream response body (truncated) so native
-// failures (e.g. 400 invalid_request) are diagnosable. Gated like logRelay.
+// failures (e.g. 400 invalid_request) are diagnosable. Always prints for
+// non-2xx since these are actionable.
 func logUpstreamError(status int, body []byte) {
-	v := os.Getenv("MERIDIAN_NATIVE_DEBUG")
-	if v != "1" && v != "true" {
+	truncated := body
+	if len(truncated) > 500 {
+		truncated = truncated[:500]
+	}
+	fmt.Fprintf(os.Stderr, "[native-egress] upstream_non2xx status=%d body=%s\n", status, truncated)
+}
+
+func logMergeSummary(account string, cloaked []byte) {
+	var d map[string]any
+	if json.Unmarshal(cloaked, &d) != nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[native-egress] upstream_non2xx status=%d body=%s\n", status, body)
+	sysBlocks := 0
+	cacheBlocks := 0
+	if sys, ok := d["system"].([]any); ok {
+		sysBlocks = len(sys)
+		for _, s := range sys {
+			if m, ok := s.(map[string]any); ok {
+				if _, ok := m["cache_control"]; ok {
+					cacheBlocks++
+				}
+			}
+		}
+	}
+	toolCount := 0
+	if t, ok := d["tools"].([]any); ok {
+		toolCount = len(t)
+	}
+	msgCount := 0
+	if m, ok := d["messages"].([]any); ok {
+		msgCount = len(m)
+	}
+	model, _ := d["model"].(string)
+	thinking := "none"
+	if th, ok := d["thinking"].(map[string]any); ok {
+		if t, ok := th["type"].(string); ok {
+			thinking = t
+		}
+	}
+	oc := "none"
+	if o, ok := d["output_config"].(map[string]any); ok {
+		if e, ok := o["effort"].(string); ok {
+			oc = e
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[native-egress] merged account=%s model=%s sys=%d cache=%d/4 tools=%d msgs=%d thinking=%s effort=%s\n",
+		account, model, sysBlocks, cacheBlocks, toolCount, msgCount, thinking, oc)
 }

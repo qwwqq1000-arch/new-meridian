@@ -74,6 +74,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		upReq.Header = headers
 
 		logRelay(account, headers, cloaked)
+		logMergeSummary(account, cloaked)
 
 		resp, err := d.Transport.RoundTrip(upReq)
 		if err != nil {
