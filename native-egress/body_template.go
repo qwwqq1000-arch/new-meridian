@@ -164,6 +164,10 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 			for _, t := range userTools {
 				if tm, ok := t.(map[string]any); ok {
 					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
+						// Strip cache_control from user tools — template system
+						// blocks use ttl=1h; user tool cache_control (default 5m)
+						// would break Anthropic's monotonic-ttl ordering.
+						delete(tm, "cache_control")
 						merged = append(merged, t)
 					}
 				}
