@@ -133,10 +133,10 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	}
 	result["system"] = sysBlocks
 	result["stream"] = tmpl.Stream
-	if _, ok := user["output_config"]; ok && tmpl.OutputConfig != nil {
+	if tmpl.OutputConfig != nil {
 		result["output_config"] = tmpl.OutputConfig
 	}
-	if _, ok := user["diagnostics"]; ok && tmpl.Diagnostics != nil {
+	if tmpl.Diagnostics != nil {
 		result["diagnostics"] = tmpl.Diagnostics
 	}
 	if tmpl.Thinking != nil {
