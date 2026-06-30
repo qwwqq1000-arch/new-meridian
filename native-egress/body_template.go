@@ -133,13 +133,10 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	}
 	result["system"] = sysBlocks
 	result["stream"] = tmpl.Stream
-	// diagnostics and output_config require specific beta access that not all
-	// subscriptions have. Only inject when the user's original request already
-	// included them (meaning their client knows the account supports it).
-	if _, ok := user["output_config"]; ok && tmpl.OutputConfig != nil {
+	if tmpl.OutputConfig != nil {
 		result["output_config"] = tmpl.OutputConfig
 	}
-	if _, ok := user["diagnostics"]; ok && tmpl.Diagnostics != nil {
+	if tmpl.Diagnostics != nil {
 		result["diagnostics"] = tmpl.Diagnostics
 	}
 	if tmpl.Thinking != nil {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -34,26 +33,6 @@ func logRelay(account string, headers http.Header, body []byte) {
 	safe := RedactAuth(headers)
 	fmt.Fprintf(os.Stderr, "[native-egress] relay account=%s headers=%v body=%s\n",
 		account, safe, body)
-}
-
-// dumpRequest writes the full outgoing request (headers + body) to /tmp for
-// one-shot debugging. Writes to /tmp/ne_dump_cc.json or /tmp/ne_dump_bare.json.
-// Remove after debugging.
-func dumpRequest(headers http.Header, body []byte, isCC bool) {
-	tag := "bare"
-	if isCC {
-		tag = "cc"
-	}
-	safe := RedactAuth(headers)
-	hmap := make(map[string]string, len(safe))
-	for k := range safe {
-		hmap[k] = safe.Get(k)
-	}
-	out := map[string]any{"headers": hmap, "body": json.RawMessage(body)}
-	data, _ := json.MarshalIndent(out, "", "  ")
-	path := "/tmp/ne_dump_" + tag + ".json"
-	os.WriteFile(path, data, 0o644)
-	fmt.Fprintf(os.Stderr, "[native-egress] dumped %s request to %s (%d bytes)\n", tag, path, len(data))
 }
 
 // logUpstreamError logs a non-2xx upstream response body (truncated) so native
