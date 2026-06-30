@@ -86,15 +86,9 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 			logUpstreamError(resp.StatusCode, errBody)
-			if resp.StatusCode == 400 {
-				// 400 = invalid request body. SDK passthrough will send the
-				// same body and get the same 400. Pass error through directly.
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(400)
-				w.Write(errBody)
-				return
-			}
-			degrade(w, fmt.Sprintf("upstream_%d", resp.StatusCode))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write(errBody)
 			return
 		}
 
