@@ -102,21 +102,21 @@ let claudeExecutable = ""
 // Separate from NativeSupervisor's internal CB, which tracks health-poll failures — by design.
 const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
-function warmupAccountInfo(profile: ResolvedProfile, configDir?: string): void {
-  resolveClaudeExecutableAsync().then(claudePath => {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
-    if (configDir) env.CLAUDE_CONFIG_DIR = configDir
-    const { execFile } = require("child_process") as typeof import("child_process")
+async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string): Promise<void> {
+  const claudePath = await resolveClaudeExecutableAsync()
+  const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+  const { execFile } = require("child_process") as typeof import("child_process")
+  await new Promise<void>((resolve) => {
     execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
       timeout: 30_000,
       env,
-    }, () => {
-      getClaudeAuthStatusAsync(
-        profile.id !== "default" ? profile.id : undefined,
-        Object.keys(profile.env).length > 0 ? profile.env : undefined
-      ).catch(() => {})
-    })
-  }).catch(() => {})
+    }, () => resolve())
+  })
+  await getClaudeAuthStatusAsync(
+    profile.id !== "default" ? profile.id : undefined,
+    Object.keys(profile.env).length > 0 ? profile.env : undefined
+  ).catch(() => {})
 }
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
@@ -2947,10 +2947,9 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     if (result.ok) {
       // Drop any stale rate-limit snapshot from a prior credential.
       rateLimitStore.clear()
-      // Fire-and-forget: trigger a tiny SDK call so the CC binary populates
-      // oauthAccount (email/subscriptionType) in .claude.json. Without this,
-      // /health returns email=null until the first real user request.
-      warmupAccountInfo(profile, configDir)
+      // Run a tiny SDK call so the CC binary populates oauthAccount
+      // (email/subscriptionType) in .claude.json before returning.
+      await warmupAccountInfo(profile, configDir)
       return c.json({ success: true, message: "Credentials saved. You are now logged in.", profile: profile.id })
     }
     return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
