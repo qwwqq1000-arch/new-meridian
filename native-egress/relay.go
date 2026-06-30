@@ -101,7 +101,9 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			assembled, assembleErr := assembleSSEToMessage(resp.Body)
 			if assembleErr != nil {
 				logDD("sse_assemble_error: %v", assembleErr)
-				degrade(w, "sse_assemble_error")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(502)
+				fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"SSE assembly failed: %s"}}`, assembleErr.Error())
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -177,9 +179,9 @@ func bodyHasClaudeIdentity(raw []byte) bool {
 }
 
 func degrade(w http.ResponseWriter, reason string) {
-	w.Header().Set("X-Degrade", "1")
-	w.Header().Set("X-Degrade-Reason", reason)
-	w.WriteHeader(200)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"native-egress: %s"}}`, reason)
 }
 
 // rejectBody returns a 400 in Anthropic error format without hitting the API.
