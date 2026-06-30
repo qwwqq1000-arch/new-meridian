@@ -176,7 +176,7 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 		result["tools"] = merged
 	}
 
-	// FROM USER: only model, messages, max_tokens, tool_choice, temperature
+	// FROM USER: only model, messages, max_tokens, tool_choice
 	result["model"] = user["model"]
 	result["messages"] = user["messages"]
 
@@ -188,9 +188,6 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	} else if tmpl.MaxTokens > 0 {
 		model, _ := user["model"].(string)
 		result["max_tokens"] = defaultMaxTokens(model)
-	}
-	if temp, ok := user["temperature"]; ok {
-		result["temperature"] = temp
 	}
 	if s, ok := user["stream"].(bool); ok {
 		result["stream"] = s
