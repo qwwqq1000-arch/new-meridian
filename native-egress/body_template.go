@@ -123,13 +123,17 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 
 	result := make(map[string]any, 16)
 
-	// System: CC template blocks first, then append user's system (like CLAUDE.md).
-	// Real CC builds all system blocks itself; user customization (CLAUDE.md) is
-	// embedded inside them. For relay users, their "system" field is equivalent
-	// to CLAUDE.md — append it as an extra block so it's not lost.
+	// System: CC template blocks, user's system appended as CLAUDE.md-style
+	// content. Strip cache_control from user blocks to stay within Anthropic's
+	// 4-block cache_control limit (the template already uses all 4 slots).
 	sysBlocks := append([]any{}, tmpl.System...)
 	if userSys := mergeUserSystem(user["system"]); len(userSys) > 0 {
-		sysBlocks = append(sysBlocks, userSys...)
+		for _, blk := range userSys {
+			if m, ok := blk.(map[string]any); ok {
+				delete(m, "cache_control")
+			}
+			sysBlocks = append(sysBlocks, blk)
+		}
 	}
 	result["system"] = sysBlocks
 	result["stream"] = tmpl.Stream
@@ -144,31 +148,13 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	}
 	result["metadata"] = map[string]any{"user_id": userID}
 
-	// Merge: start with template CC tools, append any user-specific tools
-	// that aren't already in the template (e.g. custom function-calling tools).
+	// Tools: CC template tools ONLY. User tools are dropped to match real CC
+	// fingerprint (real CC has a fixed set of ~10 tools).
 	if len(tmpl.Tools) > 0 {
-		tmplNames := make(map[string]bool, len(tmpl.Tools))
-		for _, t := range tmpl.Tools {
-			if tm, ok := t.(map[string]any); ok {
-				if n, ok := tm["name"].(string); ok {
-					tmplNames[n] = true
-				}
-			}
-		}
-		merged := append([]any{}, tmpl.Tools...)
-		if userTools, ok := user["tools"].([]any); ok {
-			for _, t := range userTools {
-				if tm, ok := t.(map[string]any); ok {
-					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
-						merged = append(merged, t)
-					}
-				}
-			}
-		}
-		result["tools"] = merged
+		result["tools"] = tmpl.Tools
 	}
 
-	// FROM USER (content + preferences)
+	// FROM USER: only model, messages, max_tokens, tool_choice, temperature
 	result["model"] = user["model"]
 	result["messages"] = user["messages"]
 
@@ -184,13 +170,8 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	if temp, ok := user["temperature"]; ok {
 		result["temperature"] = temp
 	}
-	// User can override stream
 	if s, ok := user["stream"].(bool); ok {
 		result["stream"] = s
-	}
-	// User can override thinking
-	if th, ok := user["thinking"]; ok {
-		result["thinking"] = th
 	}
 
 	// context_management with clear_thinking requires thinking to be enabled
@@ -200,7 +181,6 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 		}
 	}
 
-	// Never inflate user's max_tokens — shrink thinking to fit
 	ensureThinkingFitsMaxTokens(result)
 	ensureCacheControl(result)
 

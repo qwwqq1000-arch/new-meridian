@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,45 +46,15 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			return
 		}
 
-		fpVersion := ExtractVersionFromUA(fp["user-agent"])
-		fpBetas := fp["anthropic-beta"]
-		fpNodeVer := fp["x-stainless-runtime-version"]
-
-		// Determine if this is a genuine CC request or a bare user request.
+		// ALL requests get wrapped in the CC template — no passthrough.
 		var cloaked []byte
-		isCC := bodyHasClaudeIdentity(rawBody)
-
-		if isCC {
-			// Genuine CC — passthrough (surgical only). Also learn the template.
-			cloaked, err = CloakBody(rawBody, deriveUserID(account))
-			if d.BodyTemplate != nil {
-				d.BodyTemplate.LearnFromCC(rawBody, fpVersion, fpBetas, fpNodeVer)
-			}
-		} else {
-			// Bare user request — merge with learned or builtin template.
-			tmpl := d.BodyTemplate.Get()
-			if tmpl == nil {
-				tmpl = builtinTemplate()
-			}
-			if tmpl != nil {
-				cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account))
-			} else {
-				cloaked, err = CloakBody(rawBody, deriveUserID(account))
-			}
+		tmpl := builtinTemplate()
+		if t := d.BodyTemplate.Get(); t != nil {
+			tmpl = t
 		}
+		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account))
 		if err != nil {
-			if errors.Is(err, ErrCCBodyConflict) {
-				// CC body had unfixable conflicts — re-marshal would corrupt
-				// signatures and SDK fallback can't fix either. Pre-validate
-				// the raw body to give user a clear error message.
-				if reason := ValidateBody(rawBody); reason != "" {
-					rejectBody(w, reason)
-				} else {
-					rejectBody(w, "request body has parameter conflicts that cannot be fixed without corrupting thinking signatures")
-				}
-			} else {
-				degrade(w, "cloak_error")
-			}
+			degrade(w, "merge_error")
 			return
 		}
 
