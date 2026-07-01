@@ -2816,6 +2816,17 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // lazy in createProxyServer); startProxyServer eagerly populates it.
       const claudeExecutableInfo = getResolvedClaudeExecutableInfo()
 
+      // Proxy status: check if redsocks is running and exit IP differs from host
+      let egressProxy: Record<string, unknown> = { active: false }
+      try {
+        const { execSync } = require("child_process")
+        const redsocksRunning = (() => { try { execSync("pgrep -x redsocks", { stdio: "pipe" }); return true } catch { return false } })()
+        const hasIptables = (() => { try { execSync("iptables -t nat -L MERIDIAN_REDSOCKS 2>/dev/null", { stdio: "pipe" }); return true } catch { return false } })()
+        let exitIP: string | null = null
+        try { exitIP = execSync("wget -qO- -T 5 http://api.ipify.org 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim() } catch {}
+        egressProxy = { active: redsocksRunning && hasIptables, redsocks: redsocksRunning, iptables: hasIptables, exitIP }
+      } catch {}
+
       return c.json({
         status: "healthy",
         version: serverVersion,
@@ -2824,6 +2835,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           email: auth.email,
           subscriptionType: auth.subscriptionType,
         },
+        egressProxy,
         mode: envBool("PASSTHROUGH") ? "passthrough" : "internal",
         ...(claudeExecutableInfo ? { claudeExecutable: claudeExecutableInfo } : {}),
         plugin: { opencode: checkPluginConfigured() ? "configured" : "not-configured" },
