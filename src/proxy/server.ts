@@ -2947,9 +2947,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     if (result.ok) {
       // Drop any stale rate-limit snapshot from a prior credential.
       rateLimitStore.clear()
-      // Run a tiny SDK call so the CC binary populates oauthAccount
-      // (email/subscriptionType) in .claude.json before returning.
-      await warmupAccountInfo(profile, configDir)
+      // Fire-and-forget: populate oauthAccount (email) in background.
+      warmupAccountInfo(profile, configDir).catch(() => {})
       return c.json({ success: true, message: "Credentials saved. You are now logged in.", profile: profile.id })
     }
     return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
