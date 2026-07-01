@@ -3441,6 +3441,27 @@ export async function startProxyServer(config: Partial<ProxyConfig> = {}): Promi
   // Idempotent — re-calling start() on a hot-reload is a no-op.
   startBackgroundRefresh()
 
+  // Startup warmup: if already logged in but email is missing, run claude -p hi
+  // to populate oauthAccount so health shows email without manual intervention.
+  void (async () => {
+    const profiles = getEffectiveProfiles(finalConfig.profiles)
+    const targets = profiles.length > 0
+      ? profiles.map(p => resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, p.id))
+      : [resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, undefined)]
+    for (const profile of targets) {
+      const envOverrides = Object.keys(profile.env).length > 0 ? profile.env : undefined
+      const status = await getClaudeAuthStatusAsync(
+        profile.id !== "default" ? profile.id : undefined,
+        envOverrides
+      ).catch(() => null)
+      if (status?.loggedIn && !status.email) {
+        const configDir = profile.env.CLAUDE_CONFIG_DIR
+        if (!finalConfig.silent) console.log(`[startup] warmup for profile ${profile.id}: email missing, running claude -p hi`)
+        warmupAccountInfo(profile, configDir).catch(() => {})
+      }
+    }
+  })()
+
   // Profile-scoped OAuth token refresh: the default scheduler above only
   // watches the default Claude credential store. Multi-profile credentials
   // live under each profile's CLAUDE_CONFIG_DIR, so poll the discovered
