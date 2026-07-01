@@ -20,10 +20,25 @@ services:
       - "3456:3456"
     volumes:
       - claude-auth:/home/claude/.claude
-      # Persist global settings (native toggles, sdk-features) across recreate so
-      # UI/CLI toggle changes survive restarts.
       - meridian-config:/home/claude/.config
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  docker-prune:
+    image: docker:cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ["sh", "-c", "while true; do sleep 86400; docker system prune -af --filter until=24h; docker builder prune -af; done"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
 
 volumes:
   claude-auth:
