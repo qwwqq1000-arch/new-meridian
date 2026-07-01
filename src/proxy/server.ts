@@ -46,7 +46,7 @@ import type { RequestMetric } from "../telemetry"
 import { classifyError, extractSdkTermination, formatSdkTermination, isStaleSessionError, isRateLimitError, isExtraUsageRequiredError, isExpiredTokenError } from "./errors"
 import { refreshOAuthToken, ensureFreshToken, startBackgroundRefresh, stopBackgroundRefresh, createPlatformCredentialStore, type CredentialStore } from "./tokenRefresh"
 import { checkPluginConfigured } from "./setup"
-import { mapModelToClaudeModel, resolveClaudeExecutableAsync, resolveSdkModelDefaults, isClosedControllerError, getClaudeAuthStatusAsync, getAuthCacheInfo, getResolvedClaudeExecutableInfo, hasExtendedContext, stripExtendedContext, recordExtendedContextUnavailable } from "./models"
+import { mapModelToClaudeModel, resolveClaudeExecutableAsync, resolveSdkModelDefaults, isClosedControllerError, getClaudeAuthStatusAsync, resetCachedClaudeAuthStatus, getAuthCacheInfo, getResolvedClaudeExecutableInfo, hasExtendedContext, stripExtendedContext, recordExtendedContextUnavailable } from "./models"
 import type { AnthropicSseEvent } from "./openai"
 import { translateOpenAiToAnthropic, translateAnthropicToOpenAi, buildModelList, createSseTranslator } from "./openai"
 import { extractAdvisorModel, getLastUserMessage, stripAdvisorTools } from "./messages"
@@ -102,21 +102,34 @@ let claudeExecutable = ""
 // Separate from NativeSupervisor's internal CB, which tracks health-poll failures — by design.
 const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
-async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string): Promise<void> {
+async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, retries = 3): Promise<void> {
   const claudePath = await resolveClaudeExecutableAsync()
   const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
   if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   const { execFile } = require("child_process") as typeof import("child_process")
-  await new Promise<void>((resolve) => {
-    execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
-      timeout: 30_000,
-      env,
-    }, () => resolve())
-  })
-  await getClaudeAuthStatusAsync(
-    profile.id !== "default" ? profile.id : undefined,
-    Object.keys(profile.env).length > 0 ? profile.env : undefined
-  ).catch(() => {})
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 15_000))
+    const ok = await new Promise<boolean>((resolve) => {
+      execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
+        timeout: 30_000,
+        env,
+      }, (_err, stdout) => {
+        try {
+          const result = JSON.parse(stdout || "{}")
+          resolve(!result.is_error)
+        } catch { resolve(false) }
+      })
+    })
+    if (ok) {
+      resetCachedClaudeAuthStatus()
+      await getClaudeAuthStatusAsync(
+        profile.id !== "default" ? profile.id : undefined,
+        Object.keys(profile.env).length > 0 ? profile.env : undefined
+      ).catch(() => {})
+      return
+    }
+  }
 }
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
@@ -2945,9 +2958,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     const configDir = profile.env.CLAUDE_CONFIG_DIR
     const result = await exchangeManualOAuthCode({ codeVerifier, state }, code, configDir)
     if (result.ok) {
-      // Drop any stale rate-limit snapshot from a prior credential.
+      // Drop stale caches from prior credential.
       rateLimitStore.clear()
-      // Fire-and-forget: populate oauthAccount (email) in background.
+      resetCachedClaudeAuthStatus()
+      // Fire-and-forget: populate oauthAccount (email) in background with retries.
       warmupAccountInfo(profile, configDir).catch(() => {})
       return c.json({ success: true, message: "Credentials saved. You are now logged in.", profile: profile.id })
     }
