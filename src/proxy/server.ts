@@ -2786,6 +2786,20 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
 
   // Health check endpoint — verifies auth status
   app.get("/health", async (c) => {
+    // Proxy status: redsocks running + exit IP differs from machine IP
+    // Computed first so ALL response branches include it
+    let egressProxy: Record<string, unknown> = { active: false }
+    try {
+      const { execSync } = require("child_process")
+      const os = require("os")
+      const redsocksRunning = (() => { try { execSync("pgrep -x redsocks", { stdio: "pipe" }); return true } catch { return false } })()
+      let exitIP: string | null = null
+      try { exitIP = execSync("wget -qO- -T 5 http://api.ipify.org 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim() } catch {}
+      const machineIPs = new Set(Object.values(os.networkInterfaces()).flat().filter((i: any) => i && !i.internal).map((i: any) => i.address))
+      const ipMasked = exitIP && !machineIPs.has(exitIP)
+      egressProxy = { active: redsocksRunning && ipMasked === true, redsocks: redsocksRunning, exitIP, ipMasked }
+    } catch {}
+
     try {
       // Use active profile's auth context for health check
       const healthProfile = resolveProfile(finalConfig.profiles, finalConfig.defaultProfile)
@@ -2799,6 +2813,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           status: "degraded",
           version: serverVersion,
           error: "Could not verify auth status",
+          egressProxy,
           mode: envBool("PASSTHROUGH") ? "passthrough" : "internal",
         })
       }
@@ -2807,7 +2822,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
           status: "unhealthy",
           version: serverVersion,
           error: "Not logged in. Run: claude login",
-          auth: { loggedIn: false }
+          auth: { loggedIn: false },
+          egressProxy,
         }, 503)
       }
       // Resolved Claude executable + which step produced it. Diagnostic
@@ -2815,19 +2831,6 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // Null when /health is hit before the first SDK call (resolution is
       // lazy in createProxyServer); startProxyServer eagerly populates it.
       const claudeExecutableInfo = getResolvedClaudeExecutableInfo()
-
-      // Proxy status: redsocks running + exit IP differs from machine IP
-      let egressProxy: Record<string, unknown> = { active: false }
-      try {
-        const { execSync } = require("child_process")
-        const os = require("os")
-        const redsocksRunning = (() => { try { execSync("pgrep -x redsocks", { stdio: "pipe" }); return true } catch { return false } })()
-        let exitIP: string | null = null
-        try { exitIP = execSync("wget -qO- -T 5 http://api.ipify.org 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim() } catch {}
-        const machineIPs = new Set(Object.values(os.networkInterfaces()).flat().filter((i: any) => i && !i.internal).map((i: any) => i.address))
-        const ipMasked = exitIP && !machineIPs.has(exitIP)
-        egressProxy = { active: redsocksRunning && ipMasked === true, redsocks: redsocksRunning, exitIP, ipMasked }
-      } catch {}
 
       return c.json({
         status: "healthy",
@@ -2847,6 +2850,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         status: "degraded",
         version: serverVersion,
         error: "Could not verify auth status",
+        egressProxy,
         mode: envBool("PASSTHROUGH") ? "passthrough" : "internal",
       })
     }
