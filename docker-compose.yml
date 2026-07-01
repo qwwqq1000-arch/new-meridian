@@ -12,7 +12,6 @@ services:
   proxy:
     build: .
     image: meridian
-    user: "claude"
     depends_on:
       init:
         condition: service_completed_successfully
@@ -21,6 +20,8 @@ services:
     volumes:
       - claude-auth:/home/claude/.claude
       - meridian-config:/home/claude/.config
+    cap_add:
+      - NET_ADMIN
     restart: unless-stopped
     logging:
       driver: json-file

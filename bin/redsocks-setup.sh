@@ -40,8 +40,8 @@ if [ -z "$PROXY" ] && [ -f "$SETTINGS" ]; then
 fi
 
 if [ -z "$PROXY" ]; then
-  log "no egress proxy configured — DIRECT egress (redsocks inactive)"
-  exit 0
+  log "no egress proxy configured — BLOCKING STARTUP (all traffic must go through proxy)"
+  exit 1
 fi
 
 # --- Parse scheme://[user:pass@]host:port ---
@@ -57,8 +57,8 @@ PUSER=$(printf '%b' "$(printf '%s' "$PUSER" | sed 's/+/ /g; s/%/\\x/g')")
 PPASS=$(printf '%b' "$(printf '%s' "$PPASS" | sed 's/+/ /g; s/%/\\x/g')")
 
 if [ -z "$PHOST" ] || [ -z "$PPORT" ]; then
-  log "could not parse proxy '$PROXY' — DIRECT egress"
-  exit 0
+  log "could not parse proxy '$PROXY' — BLOCKING STARTUP (fail-closed)"
+  exit 1
 fi
 
 # Resolve host -> IP for the loop-prevention RETURN rule (no-op if already an IP).
@@ -86,7 +86,7 @@ log "direct exit IP=${DIRECT_IP:-unknown}; proxy=$PHOST:$PPORT (ip $PIP)"
 redsocks -c /etc/redsocks.conf >/var/log/redsocks.log 2>&1 &
 sleep 1
 if ! pgrep -x redsocks >/dev/null 2>&1; then
-  log "redsocks failed to start — DIRECT egress"; sed 's/^/[redsocks] /' /var/log/redsocks.log 2>/dev/null; exit 0
+  log "redsocks failed to start — BLOCKING STARTUP (fail-closed)"; sed 's/^/[redsocks] /' /var/log/redsocks.log 2>/dev/null; exit 1
 fi
 
 # --- iptables: redirect all new outbound TCP to redsocks, except the proxy
@@ -108,7 +108,7 @@ if [ -n "$PROXIED_IP" ] && { [ "$PROXIED_IP" = "$PIP" ] || [ "$PROXIED_IP" != "$
   exit 0
 fi
 
-log "SELF-TEST FAILED (proxied exit IP='$PROXIED_IP', direct was '$DIRECT_IP') — ROLLING BACK to DIRECT egress"
+log "SELF-TEST FAILED (proxied exit IP='$PROXIED_IP', direct was '$DIRECT_IP') — BLOCKING STARTUP (fail-closed)"
 flush_rules
 pkill -x redsocks 2>/dev/null
-exit 0
+exit 1

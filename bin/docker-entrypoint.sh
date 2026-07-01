@@ -30,7 +30,13 @@ if [ "$(id -u)" = "0" ]; then
   # (volume ownership is handled by the compose `init` service that chowns to 1000)
   # Seed baked-in default config so fresh machines match the committed code.
   [ -x /app/bin/seed-config.sh ] && /app/bin/seed-config.sh
-  [ -x /app/bin/redsocks-setup.sh ] && /app/bin/redsocks-setup.sh
+  if [ -x /app/bin/redsocks-setup.sh ]; then
+    /app/bin/redsocks-setup.sh
+    if [ $? -ne 0 ]; then
+      echo "[entrypoint] FATAL: egress proxy required but failed — refusing to start without proxy"
+      exit 1
+    fi
+  fi
   if command -v su-exec >/dev/null 2>&1; then
     # su-exec setuids but does NOT reset HOME — meridian (os.homedir) must see
     # /home/claude so it reads/writes ~/.config/meridian + ~/.claude correctly.
