@@ -86,11 +86,41 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 			logUpstreamError(resp.StatusCode, errBody)
+
+			// Auto-retry on expired thinking signature: strip thinking blocks and resend.
+			if resp.StatusCode == 400 && bytes.Contains(errBody, []byte("signature")) {
+				resp.Body.Close()
+				stripped := stripThinkingBlocks(cloaked)
+				if stripped != nil {
+					logDD("thinking signature expired, retrying without thinking blocks")
+					retryReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(stripped))
+					if err == nil {
+						retryReq.Header = headers
+						retryReq.Header.Set("Content-Length", fmt.Sprintf("%d", len(stripped)))
+						resp2, err2 := d.Transport.RoundTrip(retryReq)
+						if err2 == nil {
+							defer resp2.Body.Close()
+							if resp2.StatusCode >= 200 && resp2.StatusCode < 300 {
+								resp = resp2
+								goto handleSuccess
+							}
+							errBody, _ = io.ReadAll(io.LimitReader(resp2.Body, 8192))
+							logUpstreamError(resp2.StatusCode, errBody)
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(resp2.StatusCode)
+							w.Write(errBody)
+							return
+						}
+					}
+				}
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
 			w.Write(errBody)
 			return
 		}
+	handleSuccess:
 
 		requestID := resp.Header.Get("Request-Id")
 		// Track upstream TTFB: time from relay start to first upstream byte.

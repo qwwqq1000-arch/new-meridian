@@ -663,3 +663,53 @@ func ValidateBody(cloaked []byte) string {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// stripThinkingBlocks removes all thinking blocks from assistant messages
+// in the request body. Used to retry when upstream rejects expired signatures.
+// Returns nil if parsing fails (caller should not retry).
+func stripThinkingBlocks(body []byte) []byte {
+	var parsed map[string]any
+	if json.Unmarshal(body, &parsed) != nil {
+		return nil
+	}
+	msgs, _ := parsed["messages"].([]any)
+	if msgs == nil {
+		return nil
+	}
+	changed := false
+	for _, msg := range msgs {
+		m, _ := msg.(map[string]any)
+		if m == nil {
+			continue
+		}
+		role, _ := m["role"].(string)
+		if role != "assistant" {
+			continue
+		}
+		content, _ := m["content"].([]any)
+		if content == nil {
+			continue
+		}
+		filtered := make([]any, 0, len(content))
+		for _, c := range content {
+			block, _ := c.(map[string]any)
+			if block != nil && block["type"] == "thinking" {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, c)
+		}
+		if len(filtered) == 0 {
+			filtered = append(filtered, map[string]any{"type": "text", "text": "."})
+		}
+		m["content"] = filtered
+	}
+	if !changed {
+		return nil
+	}
+	out, err := marshalBody(parsed)
+	if err != nil {
+		return nil
+	}
+	return out
+}
