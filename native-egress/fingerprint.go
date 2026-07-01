@@ -69,16 +69,17 @@ func NewFPCache(ttl time.Duration, capture func(string) (string, error)) *FPCach
 // session. Used as an immediate fallback so new nodes don't need a live CC
 // request to activate the native path.
 var builtinFP = Fingerprint{
-	"user-agent":                            "claude-cli/2.1.187 (external, sdk-cli)",
+	"user-agent":                            "claude-cli/2.1.196 (external, sdk-cli)",
 	"anthropic-version":                     "2023-06-01",
-	"anthropic-beta":                        "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,redact-thinking-2026-02-12,mid-conversation-system-2026-04-07,fallback-credit-2026-06-01",
+	"anthropic-beta":                        "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
 	"anthropic-dangerous-direct-browser-access": "true",
 	"x-stainless-lang":                      "js",
 	"x-stainless-os":                        "Linux",
 	"x-stainless-arch":                      "x64",
 	"x-stainless-runtime":                   "node",
-	"x-stainless-runtime-version":           "v24.3.0",
+	"x-stainless-runtime-version":           "v26.3.0",
 	"x-stainless-package-version":           "0.94.0",
+	"x-stainless-timeout":                   "600",
 	"x-app":                                 "cli",
 }
 

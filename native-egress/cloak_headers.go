@@ -45,6 +45,6 @@ func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stre
 	h.Set("x-client-request-id", clientRequestID)
 	// Always request SSE from upstream — NE assembles to JSON for non-stream
 	// clients. This gives fast TTFB and matches real CC's always-stream behavior.
-	h.Set("accept", "text/event-stream")
+	h.Set("accept", "application/json")
 	return h
 }

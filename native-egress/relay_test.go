@@ -151,8 +151,8 @@ func TestRelayForwardsBodyVerbatim(t *testing.T) {
 func TestRelayNonStreamAssemblesSSE(t *testing.T) {
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
-			if r.Header.Get("Accept") != "text/event-stream" {
-				t.Fatal("upstream request must always use SSE")
+			if r.Header.Get("Accept") != "application/json" {
+				t.Fatal("upstream request accept header must match real CLI")
 			}
 			return sseResponse(), nil
 		}),
