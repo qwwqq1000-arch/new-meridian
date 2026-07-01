@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { serve } from "@hono/node-server"
 import type { Server } from "node:http"
+import { readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { query } from "@anthropic-ai/claude-agent-sdk"
@@ -103,32 +104,73 @@ let claudeExecutable = ""
 const nativeCb = new CircuitBreaker({ maxFailures: 3, cooldownMs: 60_000 })
 
 async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, retries = 3): Promise<void> {
-  const claudePath = await resolveClaudeExecutableAsync()
-  const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
-  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
-  const { execFile } = require("child_process") as typeof import("child_process")
+  const dir = configDir || profile.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")
+  const credsPath = join(dir, ".credentials.json")
+  const claudeJsonPath = join(dir, ".claude.json")
 
+  // Fast path: try lightweight /api/oauth/claude_cli/roles endpoint first.
+  // This doesn't consume API quota so it works even when rate-limited.
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 15_000))
-    const ok = await new Promise<boolean>((resolve) => {
-      execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
-        timeout: 30_000,
-        env,
-      }, (_err, stdout) => {
-        try {
-          const result = JSON.parse(stdout || "{}")
-          resolve(!result.is_error)
-        } catch { resolve(false) }
+    if (attempt > 0) await new Promise(r => setTimeout(r, 10_000))
+    try {
+      const creds = JSON.parse(readFileSync(credsPath, "utf-8"))
+      const token = creds?.claudeAiOauth?.accessToken
+      if (!token) continue
+
+      const resp = await fetch("https://api.anthropic.com/api/oauth/claude_cli/roles", {
+        headers: { "Authorization": `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
       })
-    })
-    if (ok) {
+      if (!resp.ok) continue
+      const data = await resp.json() as { organization_uuid?: string; organization_name?: string }
+      const orgName = data.organization_name || ""
+      const orgUuid = data.organization_uuid || ""
+      // Personal orgs are named "email@example.com's Organization"
+      const emailMatch = orgName.match(/^(.+@.+)'s Organization$/)
+      if (!emailMatch) continue
+
+      // Write oauthAccount into .claude.json so auth status picks it up
+      let claudeJson: Record<string, any> = {}
+      try { claudeJson = JSON.parse(readFileSync(claudeJsonPath, "utf-8")) } catch {}
+      claudeJson.oauthAccount = {
+        ...(claudeJson.oauthAccount || {}),
+        emailAddress: emailMatch[1],
+        organizationUuid: orgUuid,
+        organizationName: orgName,
+      }
+      writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2))
       resetCachedClaudeAuthStatus()
       await getClaudeAuthStatusAsync(
         profile.id !== "default" ? profile.id : undefined,
         Object.keys(profile.env).length > 0 ? profile.env : undefined
       ).catch(() => {})
+      console.log(`[startup] warmup: email populated via roles API: ${emailMatch[1]}`)
       return
-    }
+    } catch {}
+  }
+
+  // Fallback: run claude -p hi (needs API quota)
+  const claudePath = await resolveClaudeExecutableAsync()
+  const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+  const { execFile } = require("child_process") as typeof import("child_process")
+  const ok = await new Promise<boolean>((resolve) => {
+    execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
+      timeout: 30_000,
+      env,
+    }, (_err: any, stdout: string) => {
+      try {
+        const result = JSON.parse(stdout || "{}")
+        resolve(!result.is_error)
+      } catch { resolve(false) }
+    })
+  })
+  if (ok) {
+    resetCachedClaudeAuthStatus()
+    await getClaudeAuthStatusAsync(
+      profile.id !== "default" ? profile.id : undefined,
+      Object.keys(profile.env).length > 0 ? profile.env : undefined
+    ).catch(() => {})
   }
 }
 
