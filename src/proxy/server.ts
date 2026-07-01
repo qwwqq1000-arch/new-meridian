@@ -2816,15 +2816,17 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       // lazy in createProxyServer); startProxyServer eagerly populates it.
       const claudeExecutableInfo = getResolvedClaudeExecutableInfo()
 
-      // Proxy status: check if redsocks is running and exit IP differs from host
+      // Proxy status: redsocks running + exit IP differs from machine IP
       let egressProxy: Record<string, unknown> = { active: false }
       try {
         const { execSync } = require("child_process")
+        const os = require("os")
         const redsocksRunning = (() => { try { execSync("pgrep -x redsocks", { stdio: "pipe" }); return true } catch { return false } })()
-        const hasIptables = (() => { try { execSync("iptables -t nat -L MERIDIAN_REDSOCKS 2>/dev/null", { stdio: "pipe" }); return true } catch { return false } })()
         let exitIP: string | null = null
         try { exitIP = execSync("wget -qO- -T 5 http://api.ipify.org 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim() } catch {}
-        egressProxy = { active: redsocksRunning && hasIptables, redsocks: redsocksRunning, iptables: hasIptables, exitIP }
+        const machineIPs = new Set(Object.values(os.networkInterfaces()).flat().filter((i: any) => i && !i.internal).map((i: any) => i.address))
+        const ipMasked = exitIP && !machineIPs.has(exitIP)
+        egressProxy = { active: redsocksRunning && ipMasked === true, redsocks: redsocksRunning, exitIP, ipMasked }
       } catch {}
 
       return c.json({
