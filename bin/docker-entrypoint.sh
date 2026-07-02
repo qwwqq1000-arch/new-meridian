@@ -37,6 +37,10 @@ if [ "$(id -u)" = "0" ]; then
       exit 1
     fi
   fi
+  # Auto-set timezone to match exit IP (must run after redsocks, before drop)
+  if [ -x /app/bin/auto-timezone.sh ]; then
+    . /app/bin/auto-timezone.sh
+  fi
   if command -v su-exec >/dev/null 2>&1; then
     # su-exec setuids but does NOT reset HOME — meridian (os.homedir) must see
     # /home/claude so it reads/writes ~/.config/meridian + ~/.claude correctly.
