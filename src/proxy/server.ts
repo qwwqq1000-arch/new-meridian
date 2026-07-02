@@ -3091,9 +3091,23 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         },
       })
       if (!ok) return c.json({ success: false, message: "Failed to write credentials" }, 500)
+      const { setActiveProfile, loadProfilesFromDisk } = await import("./profiles")
+      const profiles = loadProfilesFromDisk()
+      const apiKeyIdx = profiles.findIndex((p: any) => p.id === "api-key")
+      if (apiKeyIdx >= 0) {
+        profiles.splice(apiKeyIdx, 1)
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        const { homedir } = await import("node:os")
+        const cfgFile = join(homedir(), ".config", "meridian", "profiles.json")
+        writeFileSync(cfgFile, JSON.stringify(profiles, null, 2), "utf-8")
+      }
+      setActiveProfile("default")
       rateLimitStore.clear()
       resetCachedClaudeAuthStatus()
-      warmupAccountInfo(profile, configDir).catch(() => {})
+      const defaultProfile = resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, undefined)
+      const defaultConfigDir = defaultProfile.env.CLAUDE_CONFIG_DIR
+      warmupAccountInfo(defaultProfile, defaultConfigDir).catch(() => {})
       return c.json({ success: true, message: `Session key converted to OAuth token. Account: ${result.email || "unknown"}` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
