@@ -202,7 +202,10 @@ function saveProfileConfig(profiles: ProfileConfig[]): void {
   writeFileSync(CONFIG_FILE, `${JSON.stringify(profiles, null, 2)}\n`, { mode: 0o600 })
 }
 
-function readOAuthAccountFromConfig(configDir: string): { email?: string; subscriptionType?: string } | null {
+function readOAuthAccountFromConfig(configDir: string): {
+  email?: string; subscriptionType?: string; rateLimitTier?: string;
+  subscriptionCreatedAt?: string; accountCreatedAt?: string; billingType?: string; accountUuid?: string;
+} | null {
   try {
     const dir = configDir || join(homedir(), ".claude")
     const raw = readFileSync(join(dir, ".claude.json"), "utf-8")
@@ -211,7 +214,12 @@ function readOAuthAccountFromConfig(configDir: string): { email?: string; subscr
     if (!acct) return null
     return {
       email: acct.emailAddress || undefined,
-      subscriptionType: acct.organizationType || undefined,
+      subscriptionType: acct.organizationRateLimitTier || acct.organizationType || undefined,
+      rateLimitTier: acct.organizationRateLimitTier || undefined,
+      subscriptionCreatedAt: acct.subscriptionCreatedAt || undefined,
+      accountCreatedAt: acct.accountCreatedAt || undefined,
+      billingType: acct.billingType || undefined,
+      accountUuid: acct.accountUuid || undefined,
     }
   } catch {
     return null
@@ -231,10 +239,17 @@ function getAuthStatus(configDir: string): { loggedIn: boolean; email?: string; 
       stdio: ["pipe", "pipe", "pipe"],
     })
     const status = JSON.parse(result.toString())
-    if (status.loggedIn && !status.email) {
+    if (status.loggedIn) {
       const fallback = readOAuthAccountFromConfig(configDir)
-      if (fallback?.email) status.email = fallback.email
-      if (fallback?.subscriptionType && !status.subscriptionType) status.subscriptionType = fallback.subscriptionType
+      if (fallback) {
+        if (!status.email && fallback.email) status.email = fallback.email
+        if (!status.subscriptionType && fallback.subscriptionType) status.subscriptionType = fallback.subscriptionType
+        if (fallback.rateLimitTier) status.rateLimitTier = fallback.rateLimitTier
+        if (fallback.subscriptionCreatedAt) status.subscriptionCreatedAt = fallback.subscriptionCreatedAt
+        if (fallback.accountCreatedAt) status.accountCreatedAt = fallback.accountCreatedAt
+        if (fallback.billingType) status.billingType = fallback.billingType
+        if (fallback.accountUuid) status.accountUuid = fallback.accountUuid
+      }
     }
     return status
   } catch (err) {

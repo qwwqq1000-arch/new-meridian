@@ -2859,7 +2859,12 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         auth: {
           loggedIn: true,
           email: auth.email,
-          subscriptionType: auth.subscriptionType,
+          subscriptionType: auth.subscriptionType || null,
+          rateLimitTier: auth.rateLimitTier || null,
+          subscriptionCreatedAt: auth.subscriptionCreatedAt || null,
+          accountCreatedAt: auth.accountCreatedAt || null,
+          billingType: auth.billingType || null,
+          accountUuid: auth.accountUuid || null,
         },
         egressProxy,
         mode: envBool("PASSTHROUGH") ? "passthrough" : "internal",
