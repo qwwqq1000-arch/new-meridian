@@ -2,13 +2,57 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// PrevReqStore tracks the last Anthropic request-id per session so we can
+// populate cc_prev_req in the billing header (multi-turn chain signal).
+type PrevReqStore struct {
+	mu    sync.Mutex
+	bySession map[string]string // sessionID → last request-id
+	bySuffix  map[string]string // sessionID → random 3-char hex suffix (stable per session)
+}
+
+func NewPrevReqStore() *PrevReqStore {
+	return &PrevReqStore{bySession: make(map[string]string), bySuffix: make(map[string]string)}
+}
+
+func (s *PrevReqStore) Get(session string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bySession[session]
+}
+
+func (s *PrevReqStore) Set(session, reqID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bySession[session] = reqID
+}
+
+func (s *PrevReqStore) Suffix(session string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v, ok := s.bySuffix[session]; ok {
+		return v
+	}
+	v := randHex(2) // 3-4 hex chars, we take first 3
+	s.bySuffix[session] = v[:3]
+	return v[:3]
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 type RelayDeps struct {
 	Transport    http.RoundTripper
@@ -17,6 +61,7 @@ type RelayDeps struct {
 	SessionID    func(account string) string
 	Now          func() time.Time
 	Datadog      *DatadogEmitter
+	PrevReq      *PrevReqStore
 }
 
 func relayHandler(d RelayDeps) http.HandlerFunc {
@@ -50,7 +95,13 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		if t := d.BodyTemplate.Get(); t != nil {
 			tmpl = t
 		}
-		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account))
+		sessionID := d.SessionID(account)
+		bp := &BillingPatch{
+			CCH:           randHex(3)[:5], // 5-char hex
+			PrevReqID:     d.PrevReq.Get(sessionID),
+			VersionSuffix: d.PrevReq.Suffix(sessionID),
+		}
+		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account), bp)
 		if err != nil {
 			degrade(w, "merge_error")
 			return
@@ -63,7 +114,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
 		reqModel := extractModel(rawBody)
-		headers := BuildHeaders(fp, token, d.SessionID(account), true, reqModel, clientBeta)
+		headers := BuildHeaders(fp, token, sessionID, true, reqModel, clientBeta)
 
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {
@@ -122,6 +173,9 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 	handleSuccess:
 
 		requestID := resp.Header.Get("Request-Id")
+		if requestID != "" {
+			d.PrevReq.Set(sessionID, requestID)
+		}
 		// Track upstream TTFB: time from relay start to first upstream byte.
 		upstreamTTFB := time.Since(relayStart).Milliseconds()
 

@@ -92,6 +92,7 @@ func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
@@ -115,6 +116,7 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-abc")
 	rec := httptest.NewRecorder()
@@ -139,6 +141,7 @@ func TestRelayMergesAllRequests(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok")
 	rec := httptest.NewRecorder()
@@ -171,6 +174,7 @@ func TestRelayNonStreamAssemblesSSE(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-ns")
 	rec := httptest.NewRecorder()
@@ -224,6 +228,7 @@ func TestRelayForwardsUpstreamNon2xx(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-xyz")
 	rec := httptest.NewRecorder()
@@ -240,6 +245,7 @@ func TestRelayRejectsMissingToken(t *testing.T) {
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
 		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
 	}
 	dir := t.TempDir()
 	rec := httptest.NewRecorder()

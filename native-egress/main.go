@@ -32,6 +32,7 @@ func newServer() http.Handler {
 		SessionID:    deriveSessionID,
 		Now:          time.Now,
 		Datadog:      NewDatadogEmitter(transport, bodyTmpl, fpCache),
+		PrevReq:      NewPrevReqStore(),
 	}
 
 	mux := http.NewServeMux()

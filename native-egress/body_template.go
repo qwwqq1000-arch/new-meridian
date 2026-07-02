@@ -7,6 +7,70 @@ import (
 	"time"
 )
 
+// BillingPatch holds the fields to inject into the x-anthropic-billing-header
+// system block: cch (random per-request), cc_prev_req (from last response),
+// and version suffix (random per-session).
+type BillingPatch struct {
+	CCH           string // 5-char hex, random per request
+	PrevReqID     string // req_xxx from last response (empty on first turn)
+	VersionSuffix string // 3-char hex, stable per session
+}
+
+// patchBillingHeader rewrites the x-anthropic-billing-header system block to
+// add cch, cc_prev_req, and the version sub-build suffix that real CLI sends.
+func patchBillingHeader(system []any, bp *BillingPatch) {
+	if bp == nil {
+		return
+	}
+	for _, block := range system {
+		m, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		text, _ := m["text"].(string)
+		if !strings.Contains(text, "x-anthropic-billing-header:") {
+			continue
+		}
+
+		// Inject version suffix: cc_version=2.1.198; → cc_version=2.1.198.a3f;
+		if bp.VersionSuffix != "" {
+			text = injectVersionSuffix(text, bp.VersionSuffix)
+		}
+		// Append cch
+		if bp.CCH != "" && !strings.Contains(text, "cch=") {
+			text = strings.TrimRight(text, " ;") + "; cch=" + bp.CCH + ";"
+		}
+		// Append cc_prev_req
+		if bp.PrevReqID != "" && !strings.Contains(text, "cc_prev_req=") {
+			text = strings.TrimRight(text, " ;") + "; cc_prev_req=" + bp.PrevReqID + ";"
+		}
+
+		m["text"] = text
+		return
+	}
+}
+
+// injectVersionSuffix turns "cc_version=2.1.198;" into "cc_version=2.1.198.a3f;"
+func injectVersionSuffix(text, suffix string) string {
+	const prefix = "cc_version="
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return text
+	}
+	start := idx + len(prefix)
+	end := strings.IndexByte(text[start:], ';')
+	if end < 0 {
+		return text
+	}
+	end += start
+	ver := text[start:end]
+	// Only add suffix if not already present (no dot after base version)
+	if strings.Count(ver, ".") < 3 {
+		return text[:end] + "." + suffix + text[end:]
+	}
+	return text
+}
+
 // BodyTemplate holds the complete request body structure captured from a genuine
 // Claude Code CLI request. Non-CC requests are merged with this template so every
 // outgoing request matches a real CLI request exactly.
@@ -115,7 +179,7 @@ func (c *BodyTemplateCache) LearnFromCC(rawBody []byte, fpVersion, fpBetas, fpNo
 // MergeUserRequest takes a user's bare API request and merges it with the
 // captured CLI template. Only messages, model, and user-specified overrides
 // are kept from the user; everything else comes from the template.
-func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byte, error) {
+func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string, billingPatch *BillingPatch) ([]byte, error) {
 	var user map[string]any
 	if err := json.Unmarshal(userBody, &user); err != nil {
 		return nil, err
@@ -125,7 +189,9 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 	result := make(map[string]any, 16)
 
 	// ── ① TEMPLATE FIXED (always overwrite) ──
-	result["system"] = append([]any{}, tmpl.System...)
+	sysCopy := append([]any{}, tmpl.System...)
+	patchBillingHeader(sysCopy, billingPatch)
+	result["system"] = sysCopy
 	result["metadata"] = map[string]any{"user_id": userID}
 	if tmpl.ContextManagement != nil {
 		result["context_management"] = tmpl.ContextManagement
