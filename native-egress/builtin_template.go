@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"strings"
 	"sync"
 )
 
@@ -47,8 +48,16 @@ func builtinTemplate() *BodyTemplate {
 		if mt, ok := raw["max_tokens"].(float64); ok && mt > 0 {
 			tmpl.MaxTokens = int(mt)
 		}
+		for _, s := range tmpl.System {
+			if m, ok := s.(map[string]any); ok {
+				if text, _ := m["text"].(string); strings.Contains(text, "cc_version=") {
+					tmpl.Version = ExtractVersionFromBilling(text)
+					break
+				}
+			}
+		}
 		builtinTmpl = tmpl
-		logDD("builtin template loaded: system=%d blocks, tools=%d", len(tmpl.System), len(tmpl.Tools))
+		logDD("builtin template loaded: system=%d blocks, tools=%d, version=%s", len(tmpl.System), len(tmpl.Tools), tmpl.Version)
 	})
 	return builtinTmpl
 }

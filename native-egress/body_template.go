@@ -1,19 +1,32 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
 	"time"
 )
 
-// BillingPatch holds the fields to inject into the x-anthropic-billing-header
-// system block: cch (random per-request), cc_prev_req (from last response),
-// and version suffix (random per-session).
 type BillingPatch struct {
 	CCH           string // 5-char hex, random per request
 	PrevReqID     string // req_xxx from last response (empty on first turn)
-	VersionSuffix string // 3-char hex, stable per session
+	VersionSuffix string // 3-char hex, SHA256-derived from first user message
+}
+
+const versionSuffixSalt = "59cf53e54c78"
+
+func ComputeVersionSuffix(firstUserMsg, version string) string {
+	charAt := func(s string, i int) byte {
+		if i < len(s) {
+			return s[i]
+		}
+		return '0'
+	}
+	chars := string([]byte{charAt(firstUserMsg, 4), charAt(firstUserMsg, 7), charAt(firstUserMsg, 20)})
+	h := sha256.Sum256([]byte(versionSuffixSalt + chars + version))
+	return hex.EncodeToString(h[:])[:3]
 }
 
 // patchBillingHeader rewrites the x-anthropic-billing-header system block to
@@ -335,6 +348,24 @@ func stripEmptyTextBlocks(msgs any) any {
 		mm["content"] = filtered
 	}
 	return msgs
+}
+
+func ExtractVersionFromBilling(text string) string {
+	const prefix = "cc_version="
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return ""
+	}
+	s := text[idx+len(prefix):]
+	if semi := strings.IndexByte(s, ';'); semi >= 0 {
+		s = s[:semi]
+	}
+	s = strings.TrimRight(s, " ")
+	parts := strings.SplitN(s, ".", 4)
+	if len(parts) >= 3 {
+		return parts[0] + "." + parts[1] + "." + parts[2]
+	}
+	return s
 }
 
 // ExtractVersionFromUA parses version from "claude-cli/2.1.187 (...)" user-agent.

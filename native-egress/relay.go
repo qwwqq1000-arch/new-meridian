@@ -37,15 +37,15 @@ func (s *PrevReqStore) Set(session, reqID string) {
 	s.bySession[session] = reqID
 }
 
-func (s *PrevReqStore) Suffix(session string) string {
+func (s *PrevReqStore) Suffix(session, firstUserMsg, version string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if v, ok := s.bySuffix[session]; ok {
 		return v
 	}
-	v := randHex(2) // 3-4 hex chars, we take first 3
-	s.bySuffix[session] = v[:3]
-	return v[:3]
+	v := ComputeVersionSuffix(firstUserMsg, version)
+	s.bySuffix[session] = v
+	return v
 }
 
 func randHex(n int) string {
@@ -96,10 +96,15 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			tmpl = t
 		}
 		sessionID := d.SessionID(account)
+		firstMsg := extractFirstUserMsg(rawBody)
+		tmplVersion := ""
+		if tmpl.Version != "" {
+			tmplVersion = tmpl.Version
+		}
 		bp := &BillingPatch{
 			CCH:           randHex(3)[:5], // 5-char hex
 			PrevReqID:     d.PrevReq.Get(sessionID),
-			VersionSuffix: d.PrevReq.Suffix(sessionID),
+			VersionSuffix: d.PrevReq.Suffix(sessionID, firstMsg, tmplVersion),
 		}
 		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account), bp)
 		if err != nil {
@@ -288,6 +293,40 @@ func rejectBody(w http.ResponseWriter, message string) {
 
 func bytesReader(b []byte) io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(b))
+}
+
+func extractFirstUserMsg(body []byte) string {
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return ""
+	}
+	for _, m := range req.Messages {
+		if m.Role != "user" {
+			continue
+		}
+		var s string
+		if json.Unmarshal(m.Content, &s) == nil {
+			return s
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(m.Content, &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "text" {
+					return b.Text
+				}
+			}
+		}
+		return ""
+	}
+	return ""
 }
 
 func extractModel(body []byte) string {
