@@ -40,8 +40,10 @@ if [ -z "$PROXY" ] && [ -f "$SETTINGS" ]; then
 fi
 
 if [ -z "$PROXY" ]; then
-  log "no egress proxy configured — BLOCKING STARTUP (all traffic must go through proxy)"
-  exit 1
+  log "no egress proxy configured — container will start but API requests blocked until proxy is set via web UI"
+  # Write marker so meridian knows to block API requests
+  touch /tmp/.no-egress-proxy
+  exit 0
 fi
 
 # --- Parse scheme://[user:pass@]host:port ---

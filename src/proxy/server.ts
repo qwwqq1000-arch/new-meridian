@@ -464,6 +464,24 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   // forgot to gate it" mistake (issue #477 was the catalyst — `/settings/*`
   // was registered without going through requireAuth, so unauthenticated
   // callers could mutate adapter SDK feature config via PATCH).
+  // Block API requests when egress proxy is not configured (fail-closed).
+  // Web UI / health / settings remain accessible so the proxy can be configured.
+  const noProxyMarker = "/tmp/.no-egress-proxy"
+  app.use("/v1/*", async (c, next) => {
+    const { existsSync } = require("fs")
+    if (existsSync(noProxyMarker)) {
+      return c.json({ type: "error", error: { type: "api_error", message: "Egress proxy not configured. Set proxy in web UI and restart." } }, 503)
+    }
+    return next()
+  })
+  app.use("/messages", async (c, next) => {
+    const { existsSync } = require("fs")
+    if (existsSync(noProxyMarker)) {
+      return c.json({ type: "error", error: { type: "api_error", message: "Egress proxy not configured. Set proxy in web UI and restart." } }, 503)
+    }
+    return next()
+  })
+
   app.use("/v1/*", requireAuth)
   app.use("/messages", requireAuth)
   app.use("/telemetry/*", requireAuth)
