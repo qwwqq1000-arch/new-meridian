@@ -34,8 +34,7 @@ FROM node:22-alpine
 # redsocks + iptables: transparent egress proxy (force ALL traffic through the
 # configured SOCKS5). su-exec: drop from root (needed for iptables) to claude.
 # jq: merge baked-in default config (seed-config.sh) on boot.
-RUN apk add --no-cache redsocks iptables su-exec jq tzdata python3 py3-pip \
-    && pip3 install --break-system-packages curl_cffi
+RUN apk add --no-cache redsocks iptables su-exec jq tzdata
 
 RUN deluser --remove-home node 2>/dev/null; \
     adduser -D -u 1000 claude \
@@ -65,8 +64,8 @@ RUN mkdir -p /app/bin/shims \
 ENV PATH="/app/bin/shims:$PATH"
 COPY --from=go-build --chown=claude:claude /out/native-egress /app/native-egress
 RUN chmod +x /app/native-egress
-COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh bin/redsocks-setup.sh bin/redsocks-off.sh bin/seed-config.sh bin/tower-register.sh bin/auto-timezone.sh bin/session-to-oauth.py ./bin/
-RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh ./bin/redsocks-setup.sh ./bin/redsocks-off.sh ./bin/seed-config.sh ./bin/tower-register.sh ./bin/auto-timezone.sh ./bin/session-to-oauth.py
+COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh bin/redsocks-setup.sh bin/redsocks-off.sh bin/seed-config.sh bin/tower-register.sh bin/auto-timezone.sh ./bin/
+RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh ./bin/redsocks-setup.sh ./bin/redsocks-off.sh ./bin/seed-config.sh ./bin/tower-register.sh ./bin/auto-timezone.sh
 # Baked-in default config (seeded into ~/.config/meridian on boot by seed-config.sh)
 COPY --chown=claude:claude config/ ./config/
 

@@ -3056,7 +3056,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   })
 
   // Convert a claude.ai sessionKey cookie to OAuth tokens and save them.
-  // Calls bin/session-to-oauth.py (needs curl_cffi + egress proxy for CF bypass).
+  // Calls host-side session-bridge (port 7799) which runs curl_cffi on glibc
+  // to bypass Cloudflare. Alpine/musl curl_cffi produces wrong TLS fingerprint.
   app.post("/auth/set-session-key", async (c) => {
     let body: { sessionKey?: string }
     try { body = await c.req.json() } catch { return c.json({ success: false, message: "Invalid JSON" }, 400) }
@@ -3064,12 +3065,15 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     if (!sessionKey || !sessionKey.startsWith("sk-ant-sid")) {
       return c.json({ success: false, message: "Invalid sessionKey — must start with sk-ant-sid" }, 400)
     }
-    const { execFile } = await import("node:child_process")
-    const { promisify } = await import("node:util")
-    const execFileAsync = promisify(execFile)
     try {
-      const { stdout } = await execFileAsync("python3", ["/app/bin/session-to-oauth.py", sessionKey], { timeout: 45_000 })
-      const result = JSON.parse(stdout.trim())
+      const bridgeUrl = process.env.SESSION_BRIDGE_URL || "http://172.18.0.1:7799"
+      const resp = await fetch(bridgeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionKey }),
+        signal: AbortSignal.timeout(45_000),
+      })
+      const result = await resp.json() as any
       if (!result.ok) {
         return c.json({ success: false, message: result.error ?? "OAuth exchange failed" }, 400)
       }
