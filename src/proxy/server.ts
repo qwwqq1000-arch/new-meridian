@@ -3055,6 +3055,22 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
   })
 
+  // Set API key directly (sk-ant-*) — saves as a "api" type profile and
+  // activates it. Avoids the OAuth flow for users with raw API keys.
+  app.post("/auth/set-api-key", async (c) => {
+    let body: { apiKey?: string }
+    try { body = await c.req.json() } catch { return c.json({ success: false, message: "Invalid JSON" }, 400) }
+    const { apiKey } = body ?? {}
+    if (!apiKey || !apiKey.startsWith("sk-ant-")) {
+      return c.json({ success: false, message: "Invalid API key — must start with sk-ant-" }, 400)
+    }
+    const { saveApiKeyProfile } = await import("./profiles")
+    saveApiKeyProfile(apiKey)
+    rateLimitStore.clear()
+    resetCachedClaudeAuthStatus()
+    return c.json({ success: true, message: "API key saved and activated." })
+  })
+
   // --- OpenAI Chat Completions Compatibility ---
   // Translates OpenAI /v1/chat/completions requests to Anthropic format and
   // routes them through the internal /v1/messages handler via app.fetch().

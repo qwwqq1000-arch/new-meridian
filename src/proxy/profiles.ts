@@ -14,8 +14,8 @@
  * This is a leaf module — no imports from server.ts or session/.
  */
 
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { join, dirname } from "node:path"
 import { homedir } from "node:os"
 import { setSetting, getSetting } from "./settings"
 
@@ -234,4 +234,19 @@ export function listProfiles(
     type: p.type ?? "claude-max",
     isActive: p.id === currentActive,
   }))
+}
+
+export function saveApiKeyProfile(apiKey: string): void {
+  const profiles = loadProfilesFromDisk()
+  const existing = profiles.findIndex(p => p.id === "api-key")
+  const entry: ProfileConfig = { id: "api-key", type: "api", apiKey }
+  if (existing >= 0) {
+    profiles[existing] = entry
+  } else {
+    profiles.push(entry)
+  }
+  mkdirSync(dirname(CONFIG_FILE), { recursive: true })
+  writeFileSync(CONFIG_FILE, JSON.stringify(profiles, null, 2), "utf-8")
+  diskProfilesCacheAt = 0
+  setActiveProfile("api-key")
 }
