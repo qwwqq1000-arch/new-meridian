@@ -989,6 +989,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               profile: { configDir, account: profile.id },
               stream,
               anthropicBeta: c.req.header("anthropic-beta"),
+              apiKey: profile.env.ANTHROPIC_API_KEY,
             })
             if (r.degraded) {
               // Only a genuine sidecar-unreachable failure trips the breaker.

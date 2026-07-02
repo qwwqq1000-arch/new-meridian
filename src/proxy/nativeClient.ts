@@ -17,6 +17,8 @@ export async function forwardToNative(input: {
    * structured outputs require their beta flag, which the static capture lacks.
    */
   anthropicBeta?: string
+  /** sk-ant-* API key — Go relay uses x-api-key header instead of Bearer auth */
+  apiKey?: string
   fetchImpl?: FetchLike
 }): Promise<{ degraded: boolean; reason?: string; response?: Response; connectionFailed?: boolean }> {
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as FetchLike)
@@ -29,6 +31,7 @@ export async function forwardToNative(input: {
         "x-native-account": input.profile.account,
         "x-native-stream": input.stream ? "1" : "0",
         ...(input.anthropicBeta ? { "x-native-anthropic-beta": input.anthropicBeta } : {}),
+        ...(input.apiKey ? { "x-native-api-key": input.apiKey } : {}),
       },
       body: input.rawBody,
     })

@@ -78,10 +78,12 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		clientBeta := r.Header.Get("X-Native-Anthropic-Beta")
 
 		token, _, _, err := ReadToken(configDir)
-		if err != nil || token == "" {
+		apiKey := r.Header.Get("X-Native-Api-Key") // sk-ant-* from client
+		if (err != nil || token == "") && apiKey == "" {
 			degrade(w, "no_token")
 			return
 		}
+		useApiKey := token == "" && apiKey != ""
 
 		fp, ok := d.FP.Get(account, configDir, d.Now())
 		if !ok {
@@ -119,7 +121,12 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
 		reqModel := extractModel(rawBody)
-		headers := BuildHeaders(fp, token, sessionID, true, reqModel, clientBeta)
+		var headers http.Header
+		if useApiKey {
+			headers = BuildHeadersApiKey(fp, apiKey, sessionID, true, reqModel, clientBeta)
+		} else {
+			headers = BuildHeaders(fp, token, sessionID, true, reqModel, clientBeta)
+		}
 
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {

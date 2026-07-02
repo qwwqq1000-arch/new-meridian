@@ -256,6 +256,35 @@ func TestRelayRejectsMissingToken(t *testing.T) {
 	}
 }
 
+func TestRelayApiKeyAuth(t *testing.T) {
+	var gotApiKey, gotAuth string
+	deps := RelayDeps{
+		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+			gotApiKey = r.Header.Get("x-api-key")
+			gotAuth = r.Header.Get("authorization")
+			return sseResponse(), nil
+		}),
+		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		SessionID: func(string) string { return "s" },
+		Now:       time.Now,
+		PrevReq:   NewPrevReqStore(),
+	}
+	dir := t.TempDir() // no credentials.json → token empty
+	rec := httptest.NewRecorder()
+	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
+	req.Header.Set("X-Native-Api-Key", "sk-ant-test123")
+	relayHandler(deps)(rec, req)
+	if rec.Header().Get("X-Degrade") == "1" {
+		t.Fatalf("should not degrade with api key, got reason: %s", rec.Header().Get("X-Degrade-Reason"))
+	}
+	if gotApiKey != "sk-ant-test123" {
+		t.Fatalf("expected x-api-key header, got %q", gotApiKey)
+	}
+	if gotAuth != "" {
+		t.Fatalf("should not have authorization header when using api key, got %q", gotAuth)
+	}
+}
+
 func TestComputeVersionSuffix(t *testing.T) {
 	tests := []struct {
 		msg, version, want string

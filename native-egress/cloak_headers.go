@@ -47,6 +47,13 @@ func modelBetaFlags(model string) string {
 	return base
 }
 
+func BuildHeadersApiKey(fp Fingerprint, apiKey, sessionID string, stream bool, model string, clientBeta string) http.Header {
+	h := BuildHeaders(fp, "", sessionID, stream, model, clientBeta)
+	h.Del("authorization")
+	h.Set("x-api-key", apiKey)
+	return h
+}
+
 func BuildHeaders(fp Fingerprint, token, sessionID string, stream bool, model string, clientBeta string) http.Header {
 	h := http.Header{}
 	for k, v := range fp {
