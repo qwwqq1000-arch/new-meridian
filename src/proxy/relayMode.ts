@@ -25,8 +25,7 @@ export function nativeEligible(input: {
 }): boolean {
   if (input.clientForcedSdk) return false
   if (!(input.featureNativeForward || input.envForceNative)) return false
-  // Native needs a usable OAuth token; `api` profiles are a bare API key.
-  return input.profileType === "claude-max" || input.profileType === "oauth-token"
+  return true
 }
 
 /** Apply an internal/passthrough relayMode override to the SDK-path passthrough flag. */
