@@ -248,12 +248,21 @@ export async function getClaudeAuthStatusAsync(profileId?: string, envOverrides?
         ...(envOverrides ? { env: { ...process.env, ...envOverrides } } : {}),
       })
       const parsed = JSON.parse(stdout) as ClaudeAuthStatus
-      if (parsed.loggedIn && !parsed.email) {
-        const configDir = envOverrides?.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")
+      const configDir = envOverrides?.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")
+      // CLI may report loggedIn:false even when .credentials.json has valid
+      // OAuth tokens (e.g. sessionKey-onboarded nodes). Supplement from disk.
+      if (!parsed.loggedIn) {
+        try {
+          const credsRaw = readFileSync(join(configDir, ".credentials.json"), "utf-8")
+          const creds = JSON.parse(credsRaw)
+          if (creds?.claudeAiOauth?.accessToken) parsed.loggedIn = true
+        } catch {}
+      }
+      if (parsed.loggedIn) {
         try {
           const raw = readFileSync(join(configDir, ".claude.json"), "utf-8")
           const acct = JSON.parse(raw)?.oauthAccount
-          if (acct?.emailAddress) parsed.email = acct.emailAddress
+          if (acct?.emailAddress && !parsed.email) parsed.email = acct.emailAddress
           if (acct?.organizationType && !parsed.subscriptionType) parsed.subscriptionType = acct.organizationType
         } catch {}
       }
