@@ -2791,7 +2791,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     setSetting("egressProxy", parsed.url)
     applyProxyEnv(parsed.url)
     restartNativeSupervisor() // sidecar re-inherits env so the new proxy takes effect
-    return c.json({ ok: true, proxy: parsed.url, parsed })
+    // redsocks needs root + iptables, only entrypoint can do it → exit process so
+    // docker restart policy brings us back with the new proxy active
+    setTimeout(() => { console.log("[proxy] restarting to activate egress proxy..."); process.exit(0) }, 1000)
+    return c.json({ ok: true, proxy: parsed.url, parsed, restarting: true })
   })
 
   // Prometheus metrics endpoint
