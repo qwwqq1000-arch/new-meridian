@@ -32,8 +32,13 @@ func logRelay(account string, headers http.Header, body []byte) {
 		return
 	}
 	safe := RedactAuth(headers)
-	fmt.Fprintf(os.Stderr, "[native-egress] relay account=%s headers=%v body=%s\n",
-		account, safe, body)
+	hdrJSON, _ := json.Marshal(safe)
+	fmt.Fprintf(os.Stderr, "[native-egress] relay account=%s headers=%s\n", account, hdrJSON)
+
+	// Dump full body to file (docker logs truncates at ~16KB per line)
+	os.WriteFile("/tmp/last_relay_body.json", body, 0644)
+	os.WriteFile("/tmp/last_relay_headers.json", hdrJSON, 0644)
+	fmt.Fprintf(os.Stderr, "[native-egress] body dumped to /tmp/last_relay_body.json (%d bytes)\n", len(body))
 }
 
 // logUpstreamError logs a non-2xx upstream response body (truncated) so native

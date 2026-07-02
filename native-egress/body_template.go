@@ -123,75 +123,31 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 
 	result := make(map[string]any, 16)
 
-	// System: CC template blocks, user's system appended as CLAUDE.md-style
-	// content. Strip cache_control from user blocks to stay within Anthropic's
-	// 4-block cache_control limit (the template already uses all 4 slots).
-	sysBlocks := append([]any{}, tmpl.System...)
-	if userSys := mergeUserSystem(user["system"]); len(userSys) > 0 {
-		for _, blk := range userSys {
-			if m, ok := blk.(map[string]any); ok {
-				delete(m, "cache_control")
-			}
-			sysBlocks = append(sysBlocks, blk)
-		}
-	}
-	result["system"] = sysBlocks
-	result["stream"] = tmpl.Stream
+	// System: template blocks ONLY. User's system is discarded — real CC never
+	// has extra system blocks appended, and they are a fingerprint tell.
+	result["system"] = append([]any{}, tmpl.System...)
+
+	// output_config, thinking from template (includes display:"omitted")
 	if tmpl.OutputConfig != nil {
 		result["output_config"] = tmpl.OutputConfig
-	}
-	if tmpl.Diagnostics != nil {
-		result["diagnostics"] = tmpl.Diagnostics
 	}
 	if tmpl.Thinking != nil {
 		result["thinking"] = tmpl.Thinking
 	}
 	result["metadata"] = map[string]any{"user_id": userID}
 
-	// Tools: CC template tools as base, user tools appended (dedup by name).
-	// Real CC tool count varies (base ~10, plus ToolSearch-loaded + MCP tools).
+	// Tools: template tools ONLY. User tools are discarded — real CC has a
+	// fixed set (28 in 2.1.198); extra tools are a fingerprint tell.
 	if len(tmpl.Tools) > 0 {
-		tmplNames := make(map[string]bool, len(tmpl.Tools))
-		for _, t := range tmpl.Tools {
-			if tm, ok := t.(map[string]any); ok {
-				if n, ok := tm["name"].(string); ok {
-					tmplNames[n] = true
-				}
-			}
-		}
-		merged := append([]any{}, tmpl.Tools...)
-		if userTools, ok := user["tools"].([]any); ok {
-			for _, t := range userTools {
-				if tm, ok := t.(map[string]any); ok {
-					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
-						// Strip cache_control from user tools — template system
-						// blocks use ttl=1h; user tool cache_control (default 5m)
-						// would break Anthropic's monotonic-ttl ordering.
-						delete(tm, "cache_control")
-						merged = append(merged, t)
-					}
-				}
-			}
-		}
-		result["tools"] = merged
+		result["tools"] = append([]any{}, tmpl.Tools...)
 	}
 
 	// FROM USER: only model, messages, max_tokens, tool_choice
 	result["model"] = user["model"]
 	result["messages"] = stripEmptyTextBlocks(user["messages"])
 
-	if tc, ok := user["tool_choice"]; ok {
-		result["tool_choice"] = tc
-	}
-	if mt, ok := user["max_tokens"].(float64); ok && mt > 0 {
-		result["max_tokens"] = int(mt)
-	} else if tmpl.MaxTokens > 0 {
-		model, _ := user["model"].(string)
-		result["max_tokens"] = defaultMaxTokens(model)
-	}
-	if s, ok := user["stream"].(bool); ok {
-		result["stream"] = s
-	}
+	model, _ := user["model"].(string)
+	result["max_tokens"] = defaultMaxTokens(model)
 
 	// context_management with clear_thinking requires thinking to be enabled
 	if tmpl.ContextManagement != nil {

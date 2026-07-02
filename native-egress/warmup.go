@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -13,46 +16,14 @@ func warmupLog(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[native-egress] "+format+"\n", args...)
 }
 
-// warmupPreloadJS intercepts globalThis.fetch inside the CC CLI process and
-// writes the first large POST /v1/messages body (>10 KB = the main sonnet
-// request, not the small haiku routing request) to a temp file, then restores
-// the original fetch.  Loaded via NODE_OPTIONS=--require.
-const warmupPreloadJS = `const _of=globalThis.fetch,_fs=require("fs");
-globalThis.fetch=async function(u,o){
-if(typeof u==="string"&&u.includes("/v1/messages")&&o&&typeof o.body==="string"&&o.body.length>10000){
-try{_fs.writeFileSync(process.env._NE_BODY_PATH||"/tmp/ne_warmup_body.json",o.body)}catch(e){}
-globalThis.fetch=_of}
-return _of.apply(this,arguments)};
-`
-
-// warmupTemplate runs `claude -p "hi"` once at startup to learn the live
-// fingerprint AND body template from a genuine CC request.  Runs in a
-// background goroutine; failures are non-fatal (builtin fallbacks remain).
 func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) {
 	start := time.Now()
-	tmpDir := os.TempDir()
-	preloadPath := filepath.Join(tmpDir, "ne_warmup_preload.cjs")
-	bodyPath := filepath.Join(tmpDir, "ne_warmup_body.json")
 
-	os.Remove(bodyPath)
-	if err := os.WriteFile(preloadPath, []byte(warmupPreloadJS), 0644); err != nil {
-		warmupLog("warmup: write preload: %v", err)
-		return
-	}
-	defer os.Remove(preloadPath)
-	defer os.Remove(bodyPath)
-
-	nodeOpts := "--require " + preloadPath
-	if existing := os.Getenv("NODE_OPTIONS"); existing != "" {
-		nodeOpts = existing + " " + nodeOpts
-	}
-
+	// Step 1: fingerprint — run with ANTHROPIC_LOG=debug to capture headers
 	cmd := exec.Command(claudePath, "-p", "hi")
 	cmd.Env = append(append([]string{}, osEnviron()...),
 		"ANTHROPIC_LOG=debug",
 		"CLAUDE_CONFIG_DIR="+resolveConfigDir(configDir),
-		"NODE_OPTIONS="+nodeOpts,
-		"_NE_BODY_PATH="+bodyPath,
 	)
 
 	warmupLog("warmup: running %s -p hi ...", claudePath)
@@ -76,15 +47,58 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 	fpNodeVer := fp["x-stainless-runtime-version"]
 	warmupLog("warmup: fingerprint learned (CC %s, node %s)", fpVersion, fpNodeVer)
 
-	bodyData, err := os.ReadFile(bodyPath)
-	if err != nil || len(bodyData) == 0 {
-		warmupLog("warmup: body dump not found (CC binary may not support NODE_OPTIONS)")
+	// Step 2: body — intercept via local dump server
+	bodyData := captureBody(claudePath, configDir)
+	if len(bodyData) == 0 {
+		warmupLog("warmup: body capture returned empty")
 		return
 	}
 
 	btCache.LearnFromCC(bodyData, fpVersion, fpBetas, fpNodeVer)
 	warmupLog("warmup: body template learned (%d bytes, %d tools) in %s",
 		len(bodyData), countTemplateTools(bodyData), time.Since(start).Round(time.Millisecond))
+}
+
+func captureBody(claudePath, configDir string) []byte {
+	var mu sync.Mutex
+	var captured []byte
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		if len(body) > len(captured) {
+			captured = body
+		}
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":"msg_warmup","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-sonnet-4-6","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}`))
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		warmupLog("warmup: listen error: %v", err)
+		return nil
+	}
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	addr := ln.Addr().String()
+	warmupLog("warmup: capture server on %s", addr)
+
+	cmd := exec.Command(claudePath, "-p", "hi")
+	cmd.Env = append(append([]string{}, osEnviron()...),
+		"ANTHROPIC_BASE_URL=http://"+addr,
+		"CLAUDE_CONFIG_DIR="+resolveConfigDir(configDir),
+	)
+	cmd.CombinedOutput()
+
+	mu.Lock()
+	defer mu.Unlock()
+	return captured
 }
 
 func countTemplateTools(body []byte) int {

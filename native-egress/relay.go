@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type RelayDeps struct {
@@ -64,7 +62,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
-		headers := BuildHeaders(fp, token, d.SessionID(account), uuid.NewString(), true, clientBeta)
+		headers := BuildHeaders(fp, token, d.SessionID(account), true, clientBeta)
 
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {

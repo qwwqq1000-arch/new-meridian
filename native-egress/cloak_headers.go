@@ -26,15 +26,11 @@ func unionAnthropicBeta(lists ...string) string {
 	return strings.Join(out, ",")
 }
 
-func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stream bool, clientBeta string) http.Header {
+func BuildHeaders(fp Fingerprint, token, sessionID string, stream bool, clientBeta string) http.Header {
 	h := http.Header{}
 	for k, v := range fp {
 		h.Set(k, v)
 	}
-	// Union: capture baseline + the client's request-specific betas.
-	// No forced injection — real CC only sends betas the SDK explicitly needs
-	// for that request. Client-side (X-Native-Anthropic-Beta) carries anything
-	// the request body actually requires (e.g. structured-outputs).
 	if beta := unionAnthropicBeta(h.Get("anthropic-beta"), clientBeta); beta != "" {
 		h.Set("anthropic-beta", beta)
 	}
@@ -42,9 +38,6 @@ func BuildHeaders(fp Fingerprint, token, sessionID, clientRequestID string, stre
 	h.Set("content-type", "application/json")
 	h.Set("x-stainless-retry-count", "0")
 	h.Set("x-claude-code-session-id", sessionID)
-	h.Set("x-client-request-id", clientRequestID)
-	// Always request SSE from upstream — NE assembles to JSON for non-stream
-	// clients. This gives fast TTFB and matches real CC's always-stream behavior.
 	h.Set("accept", "application/json")
 	return h
 }

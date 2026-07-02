@@ -128,8 +128,8 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 	}
 }
 
-func TestRelayForwardsBodyVerbatim(t *testing.T) {
-	raw := []byte(`{"model":"x","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a<b>c&d","signature":"dGVzdC1zaWduYXR1cmUtZGF0YQ=="}]}]}`)
+func TestRelayMergesAllRequests(t *testing.T) {
+	raw := []byte(`{"model":"x","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a<b>c&d","signature":"dGVzdC1zaWduYXR1cmUtZGF0YQ=="}]}]}`)
 	var sent []byte
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
@@ -143,8 +143,20 @@ func TestRelayForwardsBodyVerbatim(t *testing.T) {
 	dir := writeTempCreds(t, "tok")
 	rec := httptest.NewRecorder()
 	relayHandler(deps)(rec, relayReqStream(dir, "a", raw))
-	if string(sent) != string(raw) {
-		t.Fatalf("body must be verbatim.\n got: %s\nwant: %s", sent, raw)
+	var parsed map[string]any
+	if err := json.Unmarshal(sent, &parsed); err != nil {
+		t.Fatalf("sent body not valid JSON: %v", err)
+	}
+	sys, _ := parsed["system"].([]any)
+	if len(sys) < 3 {
+		t.Fatalf("merged body should have template system blocks, got %d", len(sys))
+	}
+	tools, _ := parsed["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatal("merged body should have template tools")
+	}
+	if parsed["model"] != "x" {
+		t.Fatalf("model should be preserved from user request, got %v", parsed["model"])
 	}
 }
 
@@ -203,10 +215,11 @@ func TestRedactAuth(t *testing.T) {
 	}
 }
 
-func TestRelayDegradesOnUpstreamNon2xx(t *testing.T) {
+func TestRelayForwardsUpstreamNon2xx(t *testing.T) {
 	deps := RelayDeps{
 		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: 401, Body: http.NoBody, Header: http.Header{}}, nil
+			body := io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}`))
+			return &http.Response{StatusCode: 401, Body: body, Header: http.Header{"Content-Type": {"application/json"}}}, nil
 		}),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
 		SessionID: func(string) string { return "s" },
@@ -216,15 +229,12 @@ func TestRelayDegradesOnUpstreamNon2xx(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
-	if rec.Header().Get("X-Degrade") != "1" {
-		t.Fatalf("expected degrade on 401, got code %d", rec.Code)
-	}
-	if rec.Header().Get("X-Degrade-Reason") != "upstream_401" {
-		t.Fatalf("expected upstream_401 reason, got %q", rec.Header().Get("X-Degrade-Reason"))
+	if rec.Code != 401 {
+		t.Fatalf("expected 401 forwarded, got %d", rec.Code)
 	}
 }
 
-func TestRelayDegradesOnMissingToken(t *testing.T) {
+func TestRelayRejectsMissingToken(t *testing.T) {
 	deps := RelayDeps{
 		Transport: rtFunc(func(*http.Request) (*http.Response, error) { t.Fatal("must not forward"); return nil, nil }),
 		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
@@ -235,7 +245,7 @@ func TestRelayDegradesOnMissingToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
-	if rec.Header().Get("X-Degrade") != "1" {
-		t.Fatalf("expected degrade on missing token, got code %d", rec.Code)
+	if rec.Code != 502 {
+		t.Fatalf("expected 502 on missing token, got %d", rec.Code)
 	}
 }

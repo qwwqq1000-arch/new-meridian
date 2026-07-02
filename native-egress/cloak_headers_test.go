@@ -3,23 +3,25 @@ package main
 import "testing"
 
 func TestBuildHeaders(t *testing.T) {
-	fp := Fingerprint{"user-agent": "claude-cli/2.1.185", "x-app": "cli", "anthropic-beta": "claude-code-20250219"}
-	h := BuildHeaders(fp, "tok123", "sess-1", "req-1", false, "")
-	if h.Get("user-agent") != "claude-cli/2.1.185" {
+	fp := Fingerprint{"user-agent": "claude-cli/2.1.198", "x-app": "cli", "anthropic-beta": "claude-code-20250219"}
+	h := BuildHeaders(fp, "tok123", "sess-1", false, "")
+	if h.Get("user-agent") != "claude-cli/2.1.198" {
 		t.Fatalf("ua: %q", h.Get("user-agent"))
 	}
 	if h.Get("authorization") != "Bearer tok123" {
 		t.Fatalf("auth: %q", h.Get("authorization"))
 	}
-	if h.Get("x-claude-code-session-id") != "sess-1" || h.Get("x-client-request-id") != "req-1" {
-		t.Fatal("session/request id not set")
+	if h.Get("x-claude-code-session-id") != "sess-1" {
+		t.Fatal("session id not set")
+	}
+	if h.Get("x-client-request-id") != "" {
+		t.Fatal("x-client-request-id should not be set (real CC omits it)")
 	}
 	if h.Get("x-stainless-retry-count") != "0" {
 		t.Fatal("retry-count")
 	}
-	// Always SSE — NE assembles to JSON for non-stream clients
-	if h.Get("accept") != "text/event-stream" {
-		t.Fatalf("accept: %q (should always be SSE)", h.Get("accept"))
+	if h.Get("accept") != "application/json" {
+		t.Fatalf("accept: %q", h.Get("accept"))
 	}
 	if h.Get("connection") != "" {
 		t.Fatal("connection header must not be set (real CC omits it)")
@@ -30,15 +32,15 @@ func TestBuildHeaders(t *testing.T) {
 }
 
 func TestBuildHeadersStreamAccept(t *testing.T) {
-	h := BuildHeaders(Fingerprint{"user-agent": "claude-cli/x"}, "t", "s", "r", true, "")
-	if h.Get("accept") != "text/event-stream" {
-		t.Fatalf("stream accept: %q", h.Get("accept"))
+	h := BuildHeaders(Fingerprint{"user-agent": "claude-cli/x"}, "t", "s", true, "")
+	if h.Get("accept") != "application/json" {
+		t.Fatalf("accept: %q", h.Get("accept"))
 	}
 }
 
 func TestBuildHeadersUnionsClientBeta(t *testing.T) {
 	fp := Fingerprint{"anthropic-beta": "claude-code-20250219,oauth-2025-04-20"}
-	h := BuildHeaders(fp, "t", "s", "r", false, "structured-outputs-2025-12-15,oauth-2025-04-20")
+	h := BuildHeaders(fp, "t", "s", false, "structured-outputs-2025-12-15,oauth-2025-04-20")
 	got := h.Get("anthropic-beta")
 	want := "claude-code-20250219,oauth-2025-04-20,structured-outputs-2025-12-15"
 	if got != want {
@@ -48,7 +50,7 @@ func TestBuildHeadersUnionsClientBeta(t *testing.T) {
 
 func TestBuildHeadersNoBetaInjectionWithoutClient(t *testing.T) {
 	fp := Fingerprint{"anthropic-beta": "claude-code-20250219"}
-	h := BuildHeaders(fp, "t", "s", "r", false, "")
+	h := BuildHeaders(fp, "t", "s", false, "")
 	got := h.Get("anthropic-beta")
 	if got != "claude-code-20250219" {
 		t.Fatalf("expected only captured beta, got: %q", got)

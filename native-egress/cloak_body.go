@@ -47,13 +47,16 @@ const ccIdentityPrefix = "You are Claude Code, Anthropic's official CLI for Clau
 // Real CC sends: {"device_id":"<sha256-hex>","account_uuid":"<uuid>","session_id":"<uuid>"}
 // We derive all three deterministically from the account name so the same
 // account always produces the same user_id.
+func deriveSessionID(account string) string {
+	h := sha256.Sum256([]byte("meridian-sid:" + account))
+	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
+}
+
 func deriveUserID(account string) string {
 	h := sha256.Sum256([]byte("meridian-uid:" + account))
 	deviceID := fmt.Sprintf("%x", h)
-	accountUUID := fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
-	sessionH := sha256.Sum256([]byte("meridian-sid:" + account))
-	sessionID := fmt.Sprintf("%x-%x-%x-%x-%x", sessionH[0:4], sessionH[4:6], sessionH[6:8], sessionH[8:10], sessionH[10:16])
-	return `{"device_id":"` + deviceID + `","account_uuid":"` + accountUUID + `","session_id":"` + sessionID + `"}`
+	sessionID := deriveSessionID(account)
+	return `{"device_id":"` + deviceID + `","account_uuid":"","session_id":"` + sessionID + `"}`
 }
 
 func CloakBody(raw []byte, userID string) ([]byte, error) {
@@ -188,14 +191,7 @@ func ensureThinkingFitsMaxTokens(body map[string]any) {
 }
 
 func defaultMaxTokens(model string) int {
-	switch {
-	case strings.Contains(model, "haiku"):
-		return 16384
-	case strings.Contains(model, "sonnet"):
-		return 32000
-	default:
-		return 64000
-	}
+	return 64000
 }
 
 func thinkingModel(model string) bool {
