@@ -176,10 +176,25 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 }
 
 func modelMaxTokens(model string) int {
-	if strings.Contains(model, "haiku") {
-		return 32000
+	if isNewModel(model) {
+		return 64000
 	}
-	return 64000
+	return 32000
+}
+
+// isNewModel returns true for models that use 64000 max_tokens and mid-conversation beta.
+// Old models (sonnet-4-6, opus-4-6, haiku) use 32000.
+func isNewModel(model string) bool {
+	if strings.Contains(model, "haiku") {
+		return false
+	}
+	if strings.Contains(model, "sonnet-4") {
+		return false
+	}
+	if strings.Contains(model, "opus-4-6") {
+		return false
+	}
+	return true
 }
 
 func modelThinking(model string) map[string]any {

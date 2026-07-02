@@ -34,21 +34,35 @@ func TestBuildHeadersStreamTimeout(t *testing.T) {
 func TestBuildHeadersModelBeta(t *testing.T) {
 	fp := Fingerprint{"user-agent": "claude-cli/2.1.198"}
 
-	// Sonnet should have mid-conversation-system and effort
-	hSon := BuildHeaders(fp, "t", "s", false, "claude-sonnet-4-6", "")
-	beta := hSon.Get("anthropic-beta")
-	if !contains(beta, "mid-conversation-system-2026-04-07") {
-		t.Fatalf("sonnet beta should have mid-conversation-system, got: %s", beta)
+	// Sonnet-5 (new) should have mid-conversation-system and effort
+	hSon5 := BuildHeaders(fp, "t", "s", false, "claude-sonnet-5", "")
+	beta5 := hSon5.Get("anthropic-beta")
+	if !contains(beta5, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("sonnet-5 beta should have mid-conversation-system, got: %s", beta5)
 	}
-	if !contains(beta, "effort-2025-11-24") {
-		t.Fatalf("sonnet beta should have effort, got: %s", beta)
+	if !contains(beta5, "effort-2025-11-24") {
+		t.Fatalf("sonnet-5 beta should have effort, got: %s", beta5)
 	}
 
-	// Opus should NOT have mid-conversation-system
+	// Opus-4-6 (old) should NOT have mid-conversation-system
 	hOp := BuildHeaders(fp, "t", "s", false, "claude-opus-4-6", "")
 	betaOp := hOp.Get("anthropic-beta")
 	if contains(betaOp, "mid-conversation-system-2026-04-07") {
-		t.Fatalf("opus beta should NOT have mid-conversation-system, got: %s", betaOp)
+		t.Fatalf("opus-4-6 beta should NOT have mid-conversation-system, got: %s", betaOp)
+	}
+
+	// Opus-4-8 (new) SHOULD have mid-conversation-system
+	hOp8 := BuildHeaders(fp, "t", "s", false, "claude-opus-4-8", "")
+	betaOp8 := hOp8.Get("anthropic-beta")
+	if !contains(betaOp8, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("opus-4-8 beta should have mid-conversation-system, got: %s", betaOp8)
+	}
+
+	// Sonnet-4-6 (old) should NOT have mid-conversation-system
+	hSon46 := BuildHeaders(fp, "t", "s", false, "claude-sonnet-4-6", "")
+	betaSon46 := hSon46.Get("anthropic-beta")
+	if contains(betaSon46, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("sonnet-4-6 beta should NOT have mid-conversation-system, got: %s", betaSon46)
 	}
 
 	// Haiku should NOT have effort or mid-conversation-system

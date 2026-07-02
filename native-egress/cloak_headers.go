@@ -24,22 +24,27 @@ func unionAnthropicBeta(lists ...string) string {
 
 // modelBetaFlags returns the beta flags that real CC sends per model.
 // Captured from real CC 2.1.198 on Linux via dump server.
+//
+// Rules from cross-comparison:
+//   - haiku: no effort, no mid-conversation
+//   - old models (sonnet-4-6, opus-4-6): has effort, no mid-conversation
+//   - new models (opus-4-8, sonnet-5, fable-5): has effort + mid-conversation
 func modelBetaFlags(model string) string {
-	switch {
-	case strings.Contains(model, "haiku"):
-		return "oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13," +
-			"context-management-2025-06-27,prompt-caching-scope-2026-01-05,claude-code-20250219," +
-			"advisor-tool-2026-03-01,extended-cache-ttl-2025-04-11"
-	case strings.Contains(model, "opus"):
-		return "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14," +
-			"thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05," +
-			"advisor-tool-2026-03-01,effort-2025-11-24,extended-cache-ttl-2025-04-11"
-	default:
-		// sonnet / fable / default
-		return "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14," +
-			"thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05," +
-			"mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24,extended-cache-ttl-2025-04-11"
+	base := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14," +
+		"thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05," +
+		"advisor-tool-2026-03-01,extended-cache-ttl-2025-04-11"
+
+	if strings.Contains(model, "haiku") {
+		return base
 	}
+
+	base += ",effort-2025-11-24"
+
+	if isNewModel(model) {
+		base += ",mid-conversation-system-2026-04-07"
+	}
+
+	return base
 }
 
 func BuildHeaders(fp Fingerprint, token, sessionID string, stream bool, model string, clientBeta string) http.Header {
