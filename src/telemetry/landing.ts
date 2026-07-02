@@ -146,10 +146,10 @@ function render(h,s,q){
       +'<div style="display:flex;gap:8px;margin-bottom:12px"><button onclick="mrdLoginUrl()" style="background:#8B7CF6;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px">① OAuth 授权登录</button></div>'
       +'<div id="mrd-onb" style="margin-top:12px"></div>'
       +'<div style="border-top:1px solid #2a2a3a;margin-top:12px;padding-top:12px">'
-      +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">或直接填写 API Key (sk-ant-*)</div>'
-      +'<div style="display:flex;gap:8px"><input id="mrd-apikey" type="password" placeholder="sk-ant-sid02-..." style="flex:1;background:#0c0c14;color:#eee;border:1px solid #2a2a3a;border-radius:8px;padding:8px;font-size:12px;font-family:monospace">'
-      +'<button onclick="mrdSetApiKey()" style="background:#22c55e;color:#06210f;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap">保存 Key</button></div>'
-      +'<div id="mrd-apikey-msg" style="margin-top:8px;font-size:12px"></div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">或粘贴 Session Key 一键上号 (浏览器 Cookie → sessionKey)</div>'
+      +'<div style="display:flex;gap:8px"><input id="mrd-sesskey" type="password" placeholder="sk-ant-sid02-..." style="flex:1;background:#0c0c14;color:#eee;border:1px solid #2a2a3a;border-radius:8px;padding:8px;font-size:12px;font-family:monospace">'
+      +'<button onclick="mrdSetSessionKey()" style="background:#22c55e;color:#06210f;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap">② 一键上号</button></div>'
+      +'<div id="mrd-sesskey-msg" style="margin-top:8px;font-size:12px"></div>'
       +'</div></div>';}
   o+='</div>';
   var qp=(q&&q.profiles&&q.profiles.length)?q.profiles[0]:null;
@@ -203,16 +203,16 @@ async function mrdExchange(){
     else{if(msg)msg.innerHTML='<span style="color:var(--red)">'+(d.message||('Error '+r.status))+'</span>';}
   }catch(e){if(msg)msg.innerHTML='<span style="color:var(--red)">'+e+'</span>';}
 }
-async function mrdSetApiKey(){
-  var inp=document.getElementById('mrd-apikey'),msg=document.getElementById('mrd-apikey-msg');
-  if(!inp||!inp.value.trim()){if(msg)msg.innerHTML='<span style="color:var(--yellow)">请输入 API Key</span>';return;}
+async function mrdSetSessionKey(){
+  var inp=document.getElementById('mrd-sesskey'),msg=document.getElementById('mrd-sesskey-msg');
+  if(!inp||!inp.value.trim()){if(msg)msg.innerHTML='<span style="color:var(--yellow)">请粘贴 Session Key</span>';return;}
   var key=inp.value.trim();
-  if(!key.startsWith('sk-ant-')){if(msg)msg.innerHTML='<span style="color:var(--yellow)">Key 必须以 sk-ant- 开头</span>';return;}
-  if(msg)msg.textContent='Saving…';
+  if(!key.startsWith('sk-ant-sid')){if(msg)msg.innerHTML='<span style="color:var(--yellow)">格式错误,应以 sk-ant-sid 开头</span>';return;}
+  if(msg)msg.innerHTML='<span style="color:var(--accent)">正在换取 OAuth 令牌…(约10秒)</span>';
   try{
-    var r=await fetch('/auth/set-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:key})});
+    var r=await fetch('/auth/set-session-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionKey:key})});
     var d=await r.json().catch(function(){return{};});
-    if(r.ok&&d.success){if(msg)msg.innerHTML='<span style="color:#22c55e">✓ Key 已保存,刷新中…</span>';setTimeout(function(){location.reload();},1200);}
+    if(r.ok&&d.success){if(msg)msg.innerHTML='<span style="color:#22c55e">✓ '+(d.message||'上号成功')+',刷新中…</span>';setTimeout(function(){location.reload();},1500);}
     else{if(msg)msg.innerHTML='<span style="color:var(--red)">'+(d.message||('Error '+r.status))+'</span>';}
   }catch(e){if(msg)msg.innerHTML='<span style="color:var(--red)">'+e+'</span>';}
 }

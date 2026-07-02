@@ -3055,20 +3055,46 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
     return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
   })
 
-  // Set API key directly (sk-ant-*) — saves as a "api" type profile and
-  // activates it. Avoids the OAuth flow for users with raw API keys.
-  app.post("/auth/set-api-key", async (c) => {
-    let body: { apiKey?: string }
+  // Convert a claude.ai sessionKey cookie to OAuth tokens and save them.
+  // Calls bin/session-to-oauth.py (needs curl_cffi + egress proxy for CF bypass).
+  app.post("/auth/set-session-key", async (c) => {
+    let body: { sessionKey?: string }
     try { body = await c.req.json() } catch { return c.json({ success: false, message: "Invalid JSON" }, 400) }
-    const { apiKey } = body ?? {}
-    if (!apiKey || !apiKey.startsWith("sk-ant-")) {
-      return c.json({ success: false, message: "Invalid API key — must start with sk-ant-" }, 400)
+    const { sessionKey } = body ?? {}
+    if (!sessionKey || !sessionKey.startsWith("sk-ant-sid")) {
+      return c.json({ success: false, message: "Invalid sessionKey — must start with sk-ant-sid" }, 400)
     }
-    const { saveApiKeyProfile } = await import("./profiles")
-    saveApiKeyProfile(apiKey)
-    rateLimitStore.clear()
-    resetCachedClaudeAuthStatus()
-    return c.json({ success: true, message: "API key saved and activated." })
+    const { execFile } = await import("node:child_process")
+    const { promisify } = await import("node:util")
+    const execFileAsync = promisify(execFile)
+    try {
+      const { stdout } = await execFileAsync("python3", ["/app/bin/session-to-oauth.py", sessionKey], { timeout: 45_000 })
+      const result = JSON.parse(stdout.trim())
+      if (!result.ok) {
+        return c.json({ success: false, message: result.error ?? "OAuth exchange failed" }, 400)
+      }
+      const profile = resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, c.req.header("x-meridian-profile") || undefined)
+      const configDir = profile.env.CLAUDE_CONFIG_DIR
+      const { createPlatformCredentialStore } = await import("./tokenRefresh")
+      const store = createPlatformCredentialStore(configDir ? { claudeConfigDir: configDir } : undefined)
+      const scopes = result.scope ? result.scope.split(" ").filter(Boolean) : ["user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"]
+      const ok = await store.write({
+        claudeAiOauth: {
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
+          expiresAt: Date.now() + (result.expires_in ?? 28800) * 1000,
+          scopes,
+        },
+      })
+      if (!ok) return c.json({ success: false, message: "Failed to write credentials" }, 500)
+      rateLimitStore.clear()
+      resetCachedClaudeAuthStatus()
+      warmupAccountInfo(profile, configDir).catch(() => {})
+      return c.json({ success: true, message: `Session key converted to OAuth token. Account: ${result.email || "unknown"}` })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ success: false, message: `Session key exchange failed: ${msg}` }, 500)
+    }
   })
 
   // --- OpenAI Chat Completions Compatibility ---
