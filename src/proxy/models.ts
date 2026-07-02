@@ -65,7 +65,12 @@ export function resolveSdkModelDefaults(
 export interface ClaudeAuthStatus {
   loggedIn?: boolean
   subscriptionType?: string
+  rateLimitTier?: string
   email?: string
+  billingType?: string
+  accountUuid?: string
+  subscriptionCreatedAt?: string
+  accountCreatedAt?: string
 }
 
 
@@ -264,6 +269,11 @@ export async function getClaudeAuthStatusAsync(profileId?: string, envOverrides?
           const acct = JSON.parse(raw)?.oauthAccount
           if (acct?.emailAddress && !parsed.email) parsed.email = acct.emailAddress
           if (acct?.organizationType && !parsed.subscriptionType) parsed.subscriptionType = acct.organizationType
+          if (acct?.organizationRateLimitTier && !parsed.rateLimitTier) parsed.rateLimitTier = acct.organizationRateLimitTier
+          if (acct?.billingType && !parsed.billingType) parsed.billingType = acct.billingType
+          if (acct?.accountUuid && !parsed.accountUuid) parsed.accountUuid = acct.accountUuid
+          if (acct?.subscriptionCreatedAt && !parsed.subscriptionCreatedAt) parsed.subscriptionCreatedAt = acct.subscriptionCreatedAt
+          if (acct?.accountCreatedAt && !parsed.accountCreatedAt) parsed.accountCreatedAt = acct.accountCreatedAt
         } catch {}
       }
       if (cache) {
