@@ -3091,14 +3091,32 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         },
       })
       if (!ok) return c.json({ success: false, message: "Failed to write credentials" }, 500)
+      // Write full org profile to .claude.json so subscription shows immediately
+      const { readFileSync, writeFileSync } = await import("node:fs")
+      const { join } = await import("node:path")
+      const { homedir } = await import("node:os")
+      const dir = configDir || join(homedir(), ".claude")
+      const claudeJsonPath = join(dir, ".claude.json")
+      let claudeJson: Record<string, any> = {}
+      try { claudeJson = JSON.parse(readFileSync(claudeJsonPath, "utf-8")) } catch {}
+      claudeJson.oauthAccount = {
+        ...(claudeJson.oauthAccount || {}),
+        emailAddress: result.email || "",
+        organizationUuid: result.organizationUuid || "",
+        organizationName: result.organizationName || "",
+        organizationType: result.organizationType || "",
+        organizationRateLimitTier: result.rateLimitTier || "",
+        billingType: result.billingType || "",
+        accountCreatedAt: result.accountCreatedAt || "",
+        profileFetchedAt: Date.now(),
+      }
+      writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2))
+      // Clean up stale api-key profile if present
       const { setActiveProfile, loadProfilesFromDisk } = await import("./profiles")
       const profiles = loadProfilesFromDisk()
       const apiKeyIdx = profiles.findIndex((p: any) => p.id === "api-key")
       if (apiKeyIdx >= 0) {
         profiles.splice(apiKeyIdx, 1)
-        const { writeFileSync } = await import("node:fs")
-        const { join } = await import("node:path")
-        const { homedir } = await import("node:os")
         const cfgFile = join(homedir(), ".config", "meridian", "profiles.json")
         writeFileSync(cfgFile, JSON.stringify(profiles, null, 2), "utf-8")
       }
