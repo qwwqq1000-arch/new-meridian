@@ -64,8 +64,8 @@ RUN mkdir -p /app/bin/shims \
 ENV PATH="/app/bin/shims:$PATH"
 COPY --from=go-build --chown=claude:claude /out/native-egress /app/native-egress
 RUN chmod +x /app/native-egress
-COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh bin/redsocks-setup.sh bin/redsocks-off.sh bin/seed-config.sh ./bin/
-RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh ./bin/redsocks-setup.sh ./bin/redsocks-off.sh ./bin/seed-config.sh
+COPY --chown=claude:claude bin/docker-entrypoint.sh bin/claude-proxy-supervisor.sh bin/redsocks-setup.sh bin/redsocks-off.sh bin/seed-config.sh bin/tower-register.sh ./bin/
+RUN chmod +x ./bin/docker-entrypoint.sh ./bin/claude-proxy-supervisor.sh ./bin/redsocks-setup.sh ./bin/redsocks-off.sh ./bin/seed-config.sh ./bin/tower-register.sh
 # Baked-in default config (seeded into ~/.config/meridian on boot by seed-config.sh)
 COPY --chown=claude:claude config/ ./config/
 

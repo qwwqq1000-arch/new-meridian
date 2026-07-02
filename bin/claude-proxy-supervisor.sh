@@ -11,6 +11,11 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
+# Auto-register with Tower control panel (background, non-blocking)
+if [ -x ./bin/tower-register.sh ]; then
+  ./bin/tower-register.sh &
+fi
+
 # Auto-detect: compiled dist (Docker/npm) or TypeScript source (local dev)
 if [ -f dist/cli.js ]; then
   PROXY_CMD="node dist/cli.js"

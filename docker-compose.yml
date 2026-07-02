@@ -20,6 +20,11 @@ services:
     volumes:
       - claude-auth:/home/claude/.claude
       - meridian-config:/home/claude/.config
+    environment:
+      - MERIDIAN_API_KEY=${MERIDIAN_API_KEY:-}
+      - TOWER_URL=${TOWER_URL:-}
+      - TOWER_PUSH_TOKEN=${TOWER_PUSH_TOKEN:-}
+      - TOWER_NODE_IP=${TOWER_NODE_IP:-}
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
