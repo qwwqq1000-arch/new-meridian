@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,26 +17,46 @@ func warmupLog(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[native-egress] "+format+"\n", args...)
 }
 
-func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) {
-	start := time.Now()
-
-	// Step 1: fingerprint — run with ANTHROPIC_LOG=debug to capture headers
-	cmd := exec.Command(claudePath, "-p", "hi")
-	cmd.Env = append(append([]string{}, osEnviron()...),
-		"ANTHROPIC_LOG=debug",
-		"CLAUDE_CONFIG_DIR="+resolveConfigDir(configDir),
-	)
-
-	warmupLog("warmup: running %s -p hi ...", claudePath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		warmupLog("warmup: claude exited with error: %v (output: %d bytes)", err, len(out))
+// warmupLoop runs warmupTemplate on startup, then retries every 30s if it
+// failed (e.g. account not yet pushed). Once successful, re-runs every 10min
+// to keep the template fresh (in case CLI is upgraded).
+func warmupLoop(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) {
+	attempt := 0
+	for {
+		attempt++
+		ok := warmupTemplate(claudePath, configDir, fpCache, btCache)
+		if ok {
+			warmupLog("warmup: SUCCESS (attempt #%d) — fingerprint + body template captured from real CLI", attempt)
+			break
+		}
+		warmupLog("warmup: FAILED (attempt #%d) — will retry in 30s (account not pushed yet?)", attempt)
+		time.Sleep(30 * time.Second)
 	}
 
-	fp, ok := ParseFingerprint(string(out))
-	if !ok {
-		warmupLog("warmup: fingerprint parse failed (CC not logged in?)")
-		return
+	// Periodic refresh: re-capture every 10 minutes to pick up CLI upgrades
+	for {
+		time.Sleep(10 * time.Minute)
+		attempt++
+		ok := warmupTemplate(claudePath, configDir, fpCache, btCache)
+		if ok {
+			warmupLog("warmup: refresh SUCCESS (attempt #%d)", attempt)
+		} else {
+			warmupLog("warmup: refresh FAILED (attempt #%d) — keeping previous template", attempt)
+		}
+	}
+}
+
+// warmupTemplate intercepts a real CC CLI request via a local dump server to
+// capture both fingerprint (headers) and body template in one shot. No real
+// API call is made — ANTHROPIC_BASE_URL is pointed at the local server.
+// Returns true on success.
+func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) bool {
+	start := time.Now()
+
+	fp, bodyData := captureAll(claudePath, configDir)
+	if fp == nil {
+		warmupLog("warmup: capture failed (CC not logged in?)")
+		return false
 	}
 
 	fpCache.mu.Lock()
@@ -47,28 +68,43 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 	fpNodeVer := fp["x-stainless-runtime-version"]
 	warmupLog("warmup: fingerprint learned (CC %s, node %s)", fpVersion, fpNodeVer)
 
-	// Step 2: body — intercept via local dump server
-	bodyData := captureBody(claudePath, configDir)
 	if len(bodyData) == 0 {
 		warmupLog("warmup: body capture returned empty")
-		return
+		return false
 	}
 
 	btCache.LearnFromCC(bodyData, fpVersion, fpBetas, fpNodeVer)
 	warmupLog("warmup: body template learned (%d bytes, %d tools) in %s",
 		len(bodyData), countTemplateTools(bodyData), time.Since(start).Round(time.Millisecond))
+	return true
 }
 
-func captureBody(claudePath, configDir string) []byte {
+// captureAll runs `claude -p hi` with ANTHROPIC_BASE_URL pointing at a local
+// HTTP server, capturing both the request headers (→ fingerprint) and the
+// request body (→ template) from the same single request.
+func captureAll(claudePath, configDir string) (Fingerprint, []byte) {
 	var mu sync.Mutex
-	var captured []byte
+	var capturedBody []byte
+	var capturedFP Fingerprint
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		if len(body) > len(captured) {
-			captured = body
+		if len(body) > len(capturedBody) {
+			capturedBody = body
+			// Extract fingerprint from request headers
+			fp := Fingerprint{}
+			for k, vals := range r.Header {
+				kl := strings.ToLower(k)
+				if excluded[kl] || len(vals) == 0 {
+					continue
+				}
+				fp[kl] = vals[0]
+			}
+			if ua := fp["user-agent"]; ua != "" && strings.HasPrefix(ua, "claude-cli/") {
+				capturedFP = fp
+			}
 		}
 		mu.Unlock()
 
@@ -80,7 +116,7 @@ func captureBody(claudePath, configDir string) []byte {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		warmupLog("warmup: listen error: %v", err)
-		return nil
+		return nil, nil
 	}
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -98,7 +134,7 @@ func captureBody(claudePath, configDir string) []byte {
 
 	mu.Lock()
 	defer mu.Unlock()
-	return captured
+	return capturedFP, capturedBody
 }
 
 func countTemplateTools(body []byte) int {
