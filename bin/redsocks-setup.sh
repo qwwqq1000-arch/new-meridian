@@ -107,6 +107,7 @@ sleep 1
 PROXIED_IP=$(wget -qO- -T 15 http://api.ipify.org 2>/dev/null)
 if [ -n "$PROXIED_IP" ] && { [ "$PROXIED_IP" = "$PIP" ] || [ "$PROXIED_IP" != "$DIRECT_IP" ]; }; then
   log "ACTIVE ✓ all egress forced through proxy (exit IP=$PROXIED_IP, was $DIRECT_IP). FAIL-CLOSED."
+  rm -f /tmp/.no-egress-proxy
   exit 0
 fi
 
