@@ -192,18 +192,28 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		upstreamTTFB := time.Since(relayStart).Milliseconds()
 
 		if !stream {
-			// Client wants non-streaming: read full SSE, assemble final Message JSON.
-			assembled, assembleErr := assembleSSEToMessage(resp.Body)
-			if assembleErr != nil {
-				logDD("sse_assemble_error: %v", assembleErr)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(502)
-				if assembled != nil {
-					w.Write(assembled)
-				} else {
-					fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"SSE assembly failed: %s"}}`, assembleErr.Error())
+			ct := resp.Header.Get("Content-Type")
+			isJSON := strings.HasPrefix(ct, "application/json")
+
+			var assembled []byte
+			if isJSON {
+				// Upstream returned a non-streaming JSON response directly.
+				assembled, _ = io.ReadAll(resp.Body)
+			} else {
+				// Client wants non-streaming: read full SSE, assemble final Message JSON.
+				var assembleErr error
+				assembled, assembleErr = assembleSSEToMessage(resp.Body)
+				if assembleErr != nil {
+					logDD("sse_assemble_error: %v", assembleErr)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(502)
+					if assembled != nil {
+						w.Write(assembled)
+					} else {
+						fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"SSE assembly failed: %s"}}`, assembleErr.Error())
+					}
+					return
 				}
-				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Upstream-TTFB-Ms", fmt.Sprintf("%d", upstreamTTFB))
