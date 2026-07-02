@@ -62,7 +62,8 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
-		headers := BuildHeaders(fp, token, d.SessionID(account), true, clientBeta)
+		reqModel := extractModel(rawBody)
+		headers := BuildHeaders(fp, token, d.SessionID(account), true, reqModel, clientBeta)
 
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
 		if err != nil {

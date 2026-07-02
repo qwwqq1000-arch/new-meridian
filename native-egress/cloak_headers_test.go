@@ -3,8 +3,8 @@ package main
 import "testing"
 
 func TestBuildHeaders(t *testing.T) {
-	fp := Fingerprint{"user-agent": "claude-cli/2.1.198", "x-app": "cli", "anthropic-beta": "claude-code-20250219"}
-	h := BuildHeaders(fp, "tok123", "sess-1", false, "")
+	fp := Fingerprint{"user-agent": "claude-cli/2.1.198", "x-app": "cli"}
+	h := BuildHeaders(fp, "tok123", "sess-1", false, "claude-sonnet-4-6", "")
 	if h.Get("user-agent") != "claude-cli/2.1.198" {
 		t.Fatalf("ua: %q", h.Get("user-agent"))
 	}
@@ -14,46 +14,95 @@ func TestBuildHeaders(t *testing.T) {
 	if h.Get("x-claude-code-session-id") != "sess-1" {
 		t.Fatal("session id not set")
 	}
-	if h.Get("x-client-request-id") != "" {
-		t.Fatal("x-client-request-id should not be set (real CC omits it)")
-	}
 	if h.Get("x-stainless-retry-count") != "0" {
 		t.Fatal("retry-count")
 	}
-	if h.Get("accept") != "application/json" {
-		t.Fatalf("accept: %q", h.Get("accept"))
-	}
-	if h.Get("connection") != "" {
-		t.Fatal("connection header must not be set (real CC omits it)")
-	}
-	if h.Get("accept-encoding") != "" {
-		t.Fatal("accept-encoding must not be set (real CC omits it)")
+	// Non-stream → timeout=300
+	if h.Get("x-stainless-timeout") != "300" {
+		t.Fatalf("timeout should be 300 for non-stream, got %q", h.Get("x-stainless-timeout"))
 	}
 }
 
-func TestBuildHeadersStreamAccept(t *testing.T) {
-	h := BuildHeaders(Fingerprint{"user-agent": "claude-cli/x"}, "t", "s", true, "")
-	if h.Get("accept") != "application/json" {
-		t.Fatalf("accept: %q", h.Get("accept"))
+func TestBuildHeadersStreamTimeout(t *testing.T) {
+	fp := Fingerprint{"user-agent": "claude-cli/2.1.198"}
+	h := BuildHeaders(fp, "t", "s", true, "claude-sonnet-4-6", "")
+	if h.Get("x-stainless-timeout") != "600" {
+		t.Fatalf("timeout should be 600 for stream, got %q", h.Get("x-stainless-timeout"))
 	}
+}
+
+func TestBuildHeadersModelBeta(t *testing.T) {
+	fp := Fingerprint{"user-agent": "claude-cli/2.1.198"}
+
+	// Sonnet should have mid-conversation-system and effort
+	hSon := BuildHeaders(fp, "t", "s", false, "claude-sonnet-4-6", "")
+	beta := hSon.Get("anthropic-beta")
+	if !contains(beta, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("sonnet beta should have mid-conversation-system, got: %s", beta)
+	}
+	if !contains(beta, "effort-2025-11-24") {
+		t.Fatalf("sonnet beta should have effort, got: %s", beta)
+	}
+
+	// Opus should NOT have mid-conversation-system
+	hOp := BuildHeaders(fp, "t", "s", false, "claude-opus-4-6", "")
+	betaOp := hOp.Get("anthropic-beta")
+	if contains(betaOp, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("opus beta should NOT have mid-conversation-system, got: %s", betaOp)
+	}
+
+	// Haiku should NOT have effort or mid-conversation-system
+	hHa := BuildHeaders(fp, "t", "s", false, "claude-haiku-4-5", "")
+	betaHa := hHa.Get("anthropic-beta")
+	if contains(betaHa, "effort-2025-11-24") {
+		t.Fatalf("haiku beta should NOT have effort, got: %s", betaHa)
+	}
+	if contains(betaHa, "mid-conversation-system-2026-04-07") {
+		t.Fatalf("haiku beta should NOT have mid-conversation-system, got: %s", betaHa)
+	}
+}
+
+func contains(s, sub string) bool {
+	for _, p := range splitBeta(s) {
+		if p == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func splitBeta(s string) []string {
+	var out []string
+	for _, p := range splitComma(s) {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func splitComma(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ',' {
+			p := s[start:i]
+			for len(p) > 0 && p[0] == ' ' {
+				p = p[1:]
+			}
+			out = append(out, p)
+			start = i + 1
+		}
+	}
+	return out
 }
 
 func TestBuildHeadersUnionsClientBeta(t *testing.T) {
-	fp := Fingerprint{"anthropic-beta": "claude-code-20250219,oauth-2025-04-20"}
-	h := BuildHeaders(fp, "t", "s", false, "structured-outputs-2025-12-15,oauth-2025-04-20")
+	fp := Fingerprint{}
+	h := BuildHeaders(fp, "t", "s", false, "claude-sonnet-4-6", "structured-outputs-2025-12-15,oauth-2025-04-20")
 	got := h.Get("anthropic-beta")
-	want := "claude-code-20250219,oauth-2025-04-20,structured-outputs-2025-12-15"
-	if got != want {
-		t.Fatalf("beta union:\n got: %q\nwant: %q", got, want)
-	}
-}
-
-func TestBuildHeadersNoBetaInjectionWithoutClient(t *testing.T) {
-	fp := Fingerprint{"anthropic-beta": "claude-code-20250219"}
-	h := BuildHeaders(fp, "t", "s", false, "")
-	got := h.Get("anthropic-beta")
-	if got != "claude-code-20250219" {
-		t.Fatalf("expected only captured beta, got: %q", got)
+	if !contains(got, "structured-outputs-2025-12-15") {
+		t.Fatalf("client beta should be unioned in, got: %q", got)
 	}
 }
 

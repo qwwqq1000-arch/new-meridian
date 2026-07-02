@@ -121,45 +121,86 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string) ([]byt
 		return nil, err
 	}
 
+	model, _ := user["model"].(string)
 	result := make(map[string]any, 16)
 
-	// System: template blocks ONLY. User's system is discarded — real CC never
-	// has extra system blocks appended, and they are a fingerprint tell.
+	// ── ① TEMPLATE FIXED (always overwrite) ──
 	result["system"] = append([]any{}, tmpl.System...)
-
-	// output_config, thinking from template (includes display:"omitted")
-	if tmpl.OutputConfig != nil {
-		result["output_config"] = tmpl.OutputConfig
-	}
-	if tmpl.Thinking != nil {
-		result["thinking"] = tmpl.Thinking
-	}
 	result["metadata"] = map[string]any{"user_id": userID}
-
-	// Tools: template tools ONLY. User tools are discarded — real CC has a
-	// fixed set (28 in 2.1.198); extra tools are a fingerprint tell.
-	if len(tmpl.Tools) > 0 {
-		result["tools"] = append([]any{}, tmpl.Tools...)
+	if tmpl.ContextManagement != nil {
+		result["context_management"] = tmpl.ContextManagement
 	}
 
-	// FROM USER: only model, messages, max_tokens, tool_choice
+	// Tools: template base + user extras (MCP tools, ToolSearch-loaded, etc.)
+	if len(tmpl.Tools) > 0 {
+		tmplNames := make(map[string]bool, len(tmpl.Tools))
+		for _, t := range tmpl.Tools {
+			if tm, ok := t.(map[string]any); ok {
+				if n, ok := tm["name"].(string); ok {
+					tmplNames[n] = true
+				}
+			}
+		}
+		merged := append([]any{}, tmpl.Tools...)
+		if userTools, ok := user["tools"].([]any); ok {
+			for _, t := range userTools {
+				if tm, ok := t.(map[string]any); ok {
+					if n, ok := tm["name"].(string); ok && !tmplNames[n] {
+						delete(tm, "cache_control")
+						merged = append(merged, t)
+					}
+				}
+			}
+		}
+		result["tools"] = merged
+	}
+
+	// ── ② MODEL-DERIVED (auto from model name) ──
+	result["max_tokens"] = modelMaxTokens(model)
+	result["thinking"] = modelThinking(model)
+	if oc := modelOutputConfig(model); oc != nil {
+		result["output_config"] = oc
+	}
+
+	// ── ③ USER PASSTHROUGH ──
 	result["model"] = user["model"]
 	result["messages"] = stripEmptyTextBlocks(user["messages"])
-
-	model, _ := user["model"].(string)
-	result["max_tokens"] = defaultMaxTokens(model)
-
-	// context_management with clear_thinking requires thinking to be enabled
-	if tmpl.ContextManagement != nil {
-		if _, hasThinking := result["thinking"]; hasThinking {
-			result["context_management"] = tmpl.ContextManagement
-		}
+	if s, ok := user["stream"].(bool); ok && s {
+		result["stream"] = true
 	}
 
 	ensureThinkingFitsMaxTokens(result)
 	ensureCacheControl(result)
 
 	return marshalBody(result)
+}
+
+func modelMaxTokens(model string) int {
+	if strings.Contains(model, "haiku") {
+		return 32000
+	}
+	return 64000
+}
+
+func modelThinking(model string) map[string]any {
+	if strings.Contains(model, "haiku") {
+		return map[string]any{
+			"type":          "enabled",
+			"budget_tokens": 31999,
+			"display":       "omitted",
+		}
+	}
+	return map[string]any{
+		"type":    "adaptive",
+		"display": "omitted",
+	}
+}
+
+func modelOutputConfig(model string) map[string]any {
+	if strings.Contains(model, "haiku") {
+		return nil
+	}
+	return map[string]any{"effort": "high"}
 }
 
 // mergeUserSystem converts the user's "system" field (string or block array)
