@@ -2875,8 +2875,39 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       checks.push({ name: "Account", status: email ? "PASS" : "FAIL", detail: email ? `${email} (${subscription || "unknown"}, ${billing || "?"})` : "No oauthAccount" })
     } catch { checks.push({ name: "Account", status: "FAIL", detail: "Cannot read .claude.json" }) }
 
+    if (email && !subscription) {
+      try {
+        const credsPath = join(configDir, ".credentials.json")
+        const creds = JSON.parse(readFileSync(credsPath, "utf-8"))
+        const token = creds?.claudeAiOauth?.accessToken
+        if (token) {
+          const orgResp = await fetch("https://claude.ai/api/organizations", {
+            headers: { "Authorization": `Bearer ${token}`, "Cookie": "" },
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (orgResp.ok) {
+            const orgs = await orgResp.json() as any[]
+            const cj = JSON.parse(readFileSync(join(configDir, ".claude.json"), "utf-8"))
+            const acct = cj.oauthAccount || {}
+            const org = orgs?.find((o: any) => o.uuid === acct.organizationUuid) || orgs?.[0]
+            if (org) {
+              const caps: string[] = org.capabilities || []
+              acct.organizationType = caps.includes("claude_max") ? "claude_max" : caps.includes("claude_pro") ? "claude_pro" : "free"
+              acct.organizationRateLimitTier = org.rate_limit_tier || "default_claude_max_20x"
+              if (!acct.billingType) acct.billingType = "stripe_subscription"
+              acct.profileFetchedAt = Date.now()
+              cj.oauthAccount = acct
+              writeFileSync(join(configDir, ".claude.json"), JSON.stringify(cj, null, 2))
+              try { writeFileSync(join(configDir, ".oauth_account_persist.json"), JSON.stringify(acct)) } catch {}
+              subscription = acct.organizationType
+              console.log(`[self-check] auto-fixed subscription: ${acct.organizationType} / ${acct.organizationRateLimitTier}`)
+            }
+          }
+        }
+      } catch {}
+    }
     if (email) {
-      checks.push({ name: "Subscription", status: subscription ? "PASS" : "WARN", detail: subscription || "Missing organizationType" })
+      checks.push({ name: "Subscription", status: subscription ? "PASS" : "FAIL", detail: subscription ? subscription : "Missing — auto-fix failed" })
     }
 
     try {
