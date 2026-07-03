@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"strings"
 	"testing"
 	"time"
 )
@@ -26,13 +25,10 @@ func TestFPCacheHitAndExpiry(t *testing.T) {
 	}
 }
 
-func TestFPCaptureFailureFallsBackToBuiltin(t *testing.T) {
+func TestFPCaptureFailureReturnsError(t *testing.T) {
 	c := NewFPCache(time.Minute, func(string) (string, error) { return "", errors.New("boom") })
-	fp, ok := c.Get("a", "/c", time.Unix(1, 0))
-	if !ok {
-		t.Fatal("capture failure must fall back to built-in fingerprint")
-	}
-	if !strings.HasPrefix(fp["user-agent"], "claude-cli/") {
-		t.Fatalf("built-in fingerprint must have claude-cli UA, got: %s", fp["user-agent"])
+	_, ok := c.Get("a", "/c", time.Unix(1, 0))
+	if ok {
+		t.Fatal("capture failure must return false, not fallback")
 	}
 }

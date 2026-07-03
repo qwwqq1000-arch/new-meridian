@@ -102,13 +102,8 @@ func (c *FPCache) Get(account, configDir string, now time.Time) (Fingerprint, bo
 		}
 	}
 
-	// Live capture failed — use built-in fingerprint so the node is
-	// immediately operational after credential upload.
-	logDD("fingerprint capture failed, using built-in fallback")
-	c.mu.Lock()
-	c.entries[account] = fpEntry{fp: builtinFP, capturedAt: now}
-	c.mu.Unlock()
-	return builtinFP, true
+	logDD("fingerprint capture failed, no fallback — warmup required")
+	return nil, false
 }
 
 // Peek returns the first cached fingerprint (any account). Used by DatadogEmitter

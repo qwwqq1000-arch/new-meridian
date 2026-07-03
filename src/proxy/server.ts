@@ -3188,6 +3188,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         } catch {}
         resetCachedClaudeAuthStatus()
       })
+      const nUrl = getNativeBaseUrl()
+      if (nUrl) fetch(`${nUrl}/warmup`, { method: "POST" }).catch(() => {})
       return c.json({ success: true, message: `Session key converted to OAuth token. Account: ${result.email || "unknown"}` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

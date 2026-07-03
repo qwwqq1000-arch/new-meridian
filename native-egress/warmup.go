@@ -13,8 +13,18 @@ import (
 	"time"
 )
 
+var warmupKick = make(chan struct{}, 1)
+
 func warmupLog(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[native-egress] "+format+"\n", args...)
+}
+
+// TriggerWarmup wakes up the warmup loop to retry immediately.
+func TriggerWarmup() {
+	select {
+	case warmupKick <- struct{}{}:
+	default:
+	}
 }
 
 // warmupLoop runs warmupTemplate on startup, then retries every 30s if it
@@ -29,13 +39,21 @@ func warmupLoop(claudePath, configDir string, fpCache *FPCache, btCache *BodyTem
 			warmupLog("warmup: SUCCESS (attempt #%d) — fingerprint + body template captured from real CLI", attempt)
 			break
 		}
-		warmupLog("warmup: FAILED (attempt #%d) — will retry in 30s (account not pushed yet?)", attempt)
-		time.Sleep(30 * time.Second)
+		warmupLog("warmup: FAILED (attempt #%d) — will retry in 30s (POST /warmup to retry now)", attempt)
+		select {
+		case <-warmupKick:
+			warmupLog("warmup: kick received, retrying immediately")
+		case <-time.After(30 * time.Second):
+		}
 	}
 
 	// Periodic refresh: re-capture every 10 minutes to pick up CLI upgrades
 	for {
-		time.Sleep(10 * time.Minute)
+		select {
+		case <-warmupKick:
+			warmupLog("warmup: kick received, refreshing")
+		case <-time.After(10 * time.Minute):
+		}
 		attempt++
 		ok := warmupTemplate(claudePath, configDir, fpCache, btCache)
 		if ok {

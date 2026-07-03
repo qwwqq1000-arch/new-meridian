@@ -81,27 +81,33 @@ func sseResponse() *http.Response {
 	}
 }
 
-func TestRelayFallsBackToBuiltinFingerprint(t *testing.T) {
+func prefilledBodyTemplate() *BodyTemplateCache {
+	btc := NewBodyTemplateCache(time.Hour)
+	bt := builtinTemplate()
+	if bt != nil {
+		btc.mu.Lock()
+		btc.tmpl = bt
+		btc.capturedAt = time.Now()
+		btc.mu.Unlock()
+	}
+	return btc
+}
+
+func TestRelayDegradesWithoutWarmup(t *testing.T) {
 	dir := writeTempCreds(t, "tok-fp-test")
-	var gotUA string
 	deps := RelayDeps{
-		Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
-			gotUA = r.Header.Get("User-Agent")
-			return sseResponse(), nil
-		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		Transport:    rtFunc(func(r *http.Request) (*http.Response, error) { t.Fatal("must not forward"); return nil, nil }),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return "", errAlways }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	rec := httptest.NewRecorder()
 	req := relayReqRaw(dir, "a", []byte(`{"messages":[]}`))
 	relayHandler(deps)(rec, req)
-	if rec.Header().Get("X-Degrade") == "1" {
-		t.Fatalf("should not degrade — builtin fingerprint should be used, got reason: %s", rec.Header().Get("X-Degrade-Reason"))
-	}
-	if !strings.HasPrefix(gotUA, "claude-cli/") {
-		t.Fatalf("expected builtin UA, got %q", gotUA)
+	if rec.Code != 502 {
+		t.Fatalf("should degrade (502) when warmup hasn't captured fingerprint, got %d", rec.Code)
 	}
 }
 
@@ -113,10 +119,11 @@ func TestRelayForwardsWithCloak(t *testing.T) {
 			gotUA = r.Header.Get("user-agent")
 			return sseResponse(), nil
 		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-abc")
 	rec := httptest.NewRecorder()
@@ -138,10 +145,11 @@ func TestRelayMergesAllRequests(t *testing.T) {
 			sent, _ = io.ReadAll(r.Body)
 			return sseResponse(), nil
 		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok")
 	rec := httptest.NewRecorder()
@@ -171,10 +179,11 @@ func TestRelayNonStreamAssemblesSSE(t *testing.T) {
 			}
 			return sseResponse(), nil
 		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-ns")
 	rec := httptest.NewRecorder()
@@ -225,10 +234,11 @@ func TestRelayForwardsUpstreamNon2xx(t *testing.T) {
 			body := io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}`))
 			return &http.Response{StatusCode: 401, Body: body, Header: http.Header{"Content-Type": {"application/json"}}}, nil
 		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := writeTempCreds(t, "tok-xyz")
 	rec := httptest.NewRecorder()
@@ -242,10 +252,11 @@ func TestRelayForwardsUpstreamNon2xx(t *testing.T) {
 func TestRelayRejectsMissingToken(t *testing.T) {
 	deps := RelayDeps{
 		Transport: rtFunc(func(*http.Request) (*http.Response, error) { t.Fatal("must not forward"); return nil, nil }),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := t.TempDir()
 	rec := httptest.NewRecorder()
@@ -264,10 +275,11 @@ func TestRelayApiKeyAuth(t *testing.T) {
 			gotAuth = r.Header.Get("authorization")
 			return sseResponse(), nil
 		}),
-		FP:        NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
-		SessionID: func(string) string { return "s" },
-		Now:       time.Now,
-		PrevReq:   NewPrevReqStore(),
+		FP:           NewFPCache(time.Minute, func(string) (string, error) { return sampleDebug, nil }),
+		BodyTemplate: prefilledBodyTemplate(),
+		SessionID:    func(string) string { return "s" },
+		Now:          time.Now,
+		PrevReq:      NewPrevReqStore(),
 	}
 	dir := t.TempDir() // no credentials.json → token empty
 	rec := httptest.NewRecorder()

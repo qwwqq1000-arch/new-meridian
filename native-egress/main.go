@@ -40,6 +40,11 @@ func newServer() http.Handler {
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	mux.HandleFunc("/warmup", func(w http.ResponseWriter, _ *http.Request) {
+		TriggerWarmup()
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"message":"warmup triggered"}`))
+	})
 	mux.HandleFunc("/relay", relayHandler(deps))
 	return mux
 }

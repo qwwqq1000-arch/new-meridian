@@ -75,9 +75,10 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 
 		// ALL requests get wrapped in the CC template — no passthrough.
 		var cloaked []byte
-		tmpl := builtinTemplate()
-		if t := d.BodyTemplate.Get(); t != nil {
-			tmpl = t
+		tmpl := d.BodyTemplate.Get()
+		if tmpl == nil {
+			degrade(w, "no_template")
+			return
 		}
 		sessionID := d.SessionID(account)
 		bp := &BillingPatch{
