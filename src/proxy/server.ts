@@ -2856,6 +2856,101 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   })
 
   // Health check endpoint — verifies auth status
+  // ── Self-check function ──
+  let lastSelfCheckResult: any = null
+  async function runSelfCheck(trigger: string) {
+    const checks: { name: string; status: "PASS" | "FAIL" | "WARN"; detail: string }[] = []
+    const _scProfiles = getEffectiveProfiles(finalConfig.profiles)
+    const _scProfile = _scProfiles.length > 0
+      ? resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, _scProfiles[0]?.id)
+      : resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, undefined)
+    const configDir = _scProfile.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")
+    let email = ""
+    let subscription = ""
+    try {
+      const cj = JSON.parse(readFileSync(join(configDir, ".claude.json"), "utf-8"))
+      email = cj.oauthAccount?.emailAddress || ""
+      subscription = cj.oauthAccount?.organizationType || ""
+      const billing = cj.oauthAccount?.billingType || ""
+      checks.push({ name: "Account", status: email ? "PASS" : "FAIL", detail: email ? `${email} (${subscription || "unknown"}, ${billing || "?"})` : "No oauthAccount" })
+    } catch { checks.push({ name: "Account", status: "FAIL", detail: "Cannot read .claude.json" }) }
+
+    if (email) {
+      checks.push({ name: "Subscription", status: subscription ? "PASS" : "WARN", detail: subscription || "Missing organizationType" })
+    }
+
+    try {
+      const { execSync: es } = require("child_process")
+      const exitIP = es("wget -qO- -T 5 http://api.ipify.org 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim()
+      const os = require("os")
+      const ifaces = os.networkInterfaces()
+      const localIPs = new Set<string>()
+      for (const addrs of Object.values(ifaces) as any[]) { for (const a of addrs || []) localIPs.add(a.address) }
+      const masked = exitIP && !localIPs.has(exitIP)
+      checks.push({ name: "Egress Proxy", status: masked ? "PASS" : "WARN", detail: `exitIP=${exitIP} masked=${masked}` })
+    } catch (e: any) { checks.push({ name: "Egress Proxy", status: "FAIL", detail: e.message || "Cannot determine exit IP" }) }
+
+    try {
+      const { execSync: es } = require("child_process")
+      const geo = es("wget -qO- -T 5 http://ip-api.com/json/?fields=timezone 2>/dev/null", { stdio: "pipe", timeout: 8000 }).toString().trim()
+      const geoTZ = JSON.parse(geo).timezone || ""
+      const localTZ = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+      checks.push({ name: "Timezone", status: geoTZ === localTZ ? "PASS" : "WARN", detail: `local=${localTZ} geo=${geoTZ}${geoTZ === localTZ ? "" : " MISMATCH"}` })
+    } catch { checks.push({ name: "Timezone", status: "WARN", detail: "Cannot determine exit IP timezone" }) }
+
+    try {
+      const nUrl = getNativeBaseUrl()
+      if (nUrl) {
+        const resp = await fetch(`${nUrl}/status`, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+        if (resp?.ok) {
+          const st = await resp.json() as any
+          checks.push({ name: "CLI Fingerprint", status: st.fingerprint ? "PASS" : "FAIL", detail: st.fingerprint ? `captured (${st.fpVersion || "?"})` : "Not captured" })
+          checks.push({ name: "Body Template", status: st.bodyTemplate ? "PASS" : "WARN", detail: st.bodyTemplate ? `captured (${st.btTools || "?"} tools)` : "Not captured — using fallback" })
+        } else { checks.push({ name: "Native Egress", status: "WARN", detail: "No /status endpoint" }) }
+      }
+    } catch {}
+
+    try {
+      readFileSync(join(configDir, ".oauth_account_persist.json"), "utf-8")
+      checks.push({ name: "OAuth Persist", status: "PASS", detail: "Backup file exists" })
+    } catch { checks.push({ name: "OAuth Persist", status: "WARN", detail: "No backup yet" }) }
+
+    const passed = checks.filter(c => c.status === "PASS").length
+    const failed = checks.filter(c => c.status === "FAIL").length
+    const warned = checks.filter(c => c.status === "WARN").length
+    const summary = `${passed} passed, ${warned} warnings, ${failed} failed`
+
+    const lines = [
+      "",
+      "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+      `\u2502  SELF-CHECK (${trigger})`.padEnd(58) + "\u2502",
+      "\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524",
+    ]
+    for (const c of checks) {
+      const icon = c.status === "PASS" ? "\u2713" : c.status === "FAIL" ? "\u2717" : "!"
+      lines.push(`\u2502 ${icon} [${c.status}] ${c.name.padEnd(16)} ${c.detail.substring(0, 35)}`)
+    }
+    lines.push("\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524")
+    lines.push(`\u2502 ${summary}${failed > 0 ? " \u26a0 ACTION REQUIRED" : failed === 0 && warned === 0 ? " \u2713 ALL CLEAR" : ""}`)
+    lines.push("\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518")
+    lines.push("")
+    console.log(lines.join("\n"))
+
+    diagnosticLog.log({ level: failed > 0 ? "error" : warned > 0 ? "warn" : "info", category: "lifecycle", message: `[${trigger}] ${summary} | ` + checks.map(c => `${c.name}:${c.status}`).join(" ") })
+    for (const c of checks) {
+      diagnosticLog.log({ level: c.status === "FAIL" ? "error" : c.status === "WARN" ? "warn" : "info", category: "lifecycle", message: `  ${c.name}: ${c.detail}` })
+    }
+
+    lastSelfCheckResult = { trigger, timestamp: Date.now(), checks, summary, passed, warned, failed }
+    return lastSelfCheckResult
+  }
+
+
+  app.get("/self-check", async (c) => {
+    const result = await runSelfCheck("manual")
+    return c.json(result)
+  })
+
   app.get("/health", async (c) => {
     // Proxy status: redsocks running + exit IP differs from machine IP
     // Computed first so ALL response branches include it
@@ -3099,6 +3194,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       resetCachedClaudeAuthStatus()
       // Fire-and-forget: populate oauthAccount (email) in background with retries.
       warmupAccountInfo(profile, configDir).catch(() => {})
+            setTimeout(() => runSelfCheck("account-import"), 3000)
       return c.json({ success: true, message: "Credentials saved. You are now logged in.", profile: profile.id })
     }
     return c.json({ success: false, message: result.error ?? "Exchange failed" }, 400)
@@ -3199,6 +3295,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       })
       const nUrl = getNativeBaseUrl()
       if (nUrl) fetch(`${nUrl}/warmup`, { method: "POST" }).catch(() => {})
+            setTimeout(() => runSelfCheck("account-import"), 3000)
       return c.json({ success: true, message: `Session key converted to OAuth token. Account: ${result.email || "unknown"}` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -3699,6 +3796,8 @@ export async function startProxyServer(config: Partial<ProxyConfig> = {}): Promi
       }
     }
   })()
+
+
 
   // Profile-scoped OAuth token refresh: the default scheduler above only
   // watches the default Claude credential store. Multi-profile credentials

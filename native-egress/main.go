@@ -45,6 +45,24 @@ func newServer() http.Handler {
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"message":"warmup triggered"}`))
 	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		hasFP := false
+		fpVersion := ""
+		fpCache.mu.Lock()
+		if e, ok := fpCache.entries["default"]; ok && len(e.fp) > 0 {
+			hasFP = true
+			fpVersion = ExtractVersionFromUA(e.fp["user-agent"])
+		}
+		fpCache.mu.Unlock()
+		hasBT := false
+		btTools := 0
+		if tmpl := bodyTmpl.Get(); tmpl != nil {
+			hasBT = true
+			btTools = len(tmpl.Tools)
+		}
+		fmt.Fprintf(w, `{"fingerprint":%v,"fpVersion":"%s","bodyTemplate":%v,"btTools":%d}`, hasFP, fpVersion, hasBT, btTools)
+	})
 	mux.HandleFunc("/relay", relayHandler(deps))
 	return mux
 }
