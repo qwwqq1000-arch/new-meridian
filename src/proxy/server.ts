@@ -172,6 +172,48 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
       Object.keys(profile.env).length > 0 ? profile.env : undefined
     ).catch(() => {})
   }
+
+  // Self-check: if email exists but subscription fields are missing, auto-populate.
+  // CLI warmup and roles API don't return org type / rate limit tier, so these
+  // fields only come from bridge.py during sessionKey onboarding. If they got
+  // lost (CLI overwrote them, or bridge didn't return them), fill from the org
+  // capabilities API, or fall back to sensible defaults for Max subscribers.
+  try {
+    let cj = JSON.parse(readFileSync(claudeJsonPath, "utf-8"))
+    const acct = cj.oauthAccount
+    if (acct?.emailAddress && (!acct.organizationType || !acct.organizationRateLimitTier)) {
+      // Try to determine org type from claude.ai org capabilities
+      const creds = JSON.parse(readFileSync(credsPath, "utf-8"))
+      const token = creds?.claudeAiOauth?.accessToken
+      let orgType = ""
+      let rateLimitTier = ""
+      if (token) {
+        try {
+          const orgResp = await fetch("https://claude.ai/api/organizations", {
+            headers: { "Authorization": `Bearer ${token}`, "Cookie": "" },
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (orgResp.ok) {
+            const orgs = await orgResp.json() as any[]
+            const org = orgs?.find((o: any) => o.uuid === acct.organizationUuid) || orgs?.[0]
+            if (org) {
+              const caps: string[] = org.capabilities || []
+              orgType = caps.includes("claude_max") ? "claude_max" : caps.includes("claude_pro") ? "claude_pro" : "free"
+              rateLimitTier = org.rate_limit_tier || ""
+            }
+          }
+        } catch {}
+      }
+      if (!acct.organizationType) acct.organizationType = orgType || "claude_max"
+      if (!acct.organizationRateLimitTier) acct.organizationRateLimitTier = rateLimitTier || "default_claude_max_20x"
+      if (!acct.billingType) acct.billingType = "stripe_subscription"
+      acct.profileFetchedAt = Date.now()
+      cj.oauthAccount = acct
+      writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
+      resetCachedClaudeAuthStatus()
+      console.log(`[startup] self-check: populated subscription fields for ${acct.emailAddress} → ${acct.organizationRateLimitTier}`)
+    }
+  } catch {}
 }
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
