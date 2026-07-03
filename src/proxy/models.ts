@@ -268,7 +268,7 @@ export async function getClaudeAuthStatusAsync(profileId?: string, envOverrides?
           const raw = readFileSync(join(configDir, ".claude.json"), "utf-8")
           const acct = JSON.parse(raw)?.oauthAccount
           if (acct?.emailAddress && !parsed.email) parsed.email = acct.emailAddress
-          if (acct?.organizationType && !parsed.subscriptionType) parsed.subscriptionType = acct.organizationType
+          if (!parsed.subscriptionType) parsed.subscriptionType = acct?.organizationRateLimitTier || acct?.organizationType || undefined
           if (acct?.organizationRateLimitTier && !parsed.rateLimitTier) parsed.rateLimitTier = acct.organizationRateLimitTier
           if (acct?.billingType && !parsed.billingType) parsed.billingType = acct.billingType
           if (acct?.accountUuid && !parsed.accountUuid) parsed.accountUuid = acct.accountUuid
