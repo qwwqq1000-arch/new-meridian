@@ -3125,7 +3125,27 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       resetCachedClaudeAuthStatus()
       const defaultProfile = resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, undefined)
       const defaultConfigDir = defaultProfile.env.CLAUDE_CONFIG_DIR
-      warmupAccountInfo(defaultProfile, defaultConfigDir).catch(() => {})
+      const bridgeOrgFields = {
+        organizationType: result.organizationType || "",
+        organizationRateLimitTier: result.rateLimitTier || "",
+        billingType: result.billingType || "",
+        accountCreatedAt: result.accountCreatedAt || "",
+      }
+      warmupAccountInfo(defaultProfile, defaultConfigDir).catch(() => {}).then(() => {
+        try {
+          const cj = JSON.parse(readFileSync(claudeJsonPath, "utf-8"))
+          let changed = false
+          for (const [k, v] of Object.entries(bridgeOrgFields)) {
+            if (v && (!cj.oauthAccount?.[k] || cj.oauthAccount[k] === "")) {
+              if (!cj.oauthAccount) cj.oauthAccount = {}
+              cj.oauthAccount[k] = v
+              changed = true
+            }
+          }
+          if (changed) writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
+        } catch {}
+        resetCachedClaudeAuthStatus()
+      })
       return c.json({ success: true, message: `Session key converted to OAuth token. Account: ${result.email || "unknown"}` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
