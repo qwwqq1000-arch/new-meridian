@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -84,7 +85,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		bp := &BillingPatch{
 			PrevReqID: d.PrevReq.Get(sessionID),
 		}
-		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account), bp)
+		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account, readAccountUUID(configDir)), bp)
 		if err != nil {
 			degrade(w, "merge_error")
 			return
@@ -114,6 +115,52 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		logRelay(account, headers, cloaked)
 		logMergeSummary(account, cloaked)
 
+		// DEBUG: dump outbound request for comparison
+		func() {
+			hdrs := map[string]string{}
+			for k := range headers {
+				hdrs[strings.ToLower(k)] = headers.Get(k)
+			}
+			dump := map[string]any{"headers": hdrs}
+			var bodyParsed map[string]any
+			if json.Unmarshal(cloaked, &bodyParsed) == nil {
+				sysSummary := []map[string]any{}
+				if sysArr, ok := bodyParsed["system"].([]any); ok {
+					for i, item := range sysArr {
+						if b, ok := item.(map[string]any); ok {
+							text, _ := b["text"].(string)
+							start := text
+							if len(start) > 120 { start = start[:120] }
+							entry := map[string]any{"index": i, "type": b["type"], "len": len(text), "cache_control": b["cache_control"], "start": start}
+							sysSummary = append(sysSummary, entry)
+						}
+					}
+				}
+				toolNames := []string{}
+				if tools, ok := bodyParsed["tools"].([]any); ok {
+					for _, t := range tools {
+						if tm, ok := t.(map[string]any); ok {
+							if n, ok := tm["name"].(string); ok { toolNames = append(toolNames, n) }
+						}
+					}
+				}
+				dump["model"] = bodyParsed["model"]
+				dump["max_tokens"] = bodyParsed["max_tokens"]
+				dump["stream"] = bodyParsed["stream"]
+				dump["thinking"] = bodyParsed["thinking"]
+				dump["context_management"] = bodyParsed["context_management"]
+				dump["output_config"] = bodyParsed["output_config"]
+				dump["metadata"] = bodyParsed["metadata"]
+				dump["diagnostics"] = bodyParsed["diagnostics"]
+				dump["tools_count"] = len(toolNames)
+				dump["tools_names"] = toolNames
+				dump["system_blocks"] = sysSummary
+				if msgs, ok := bodyParsed["messages"].([]any); ok { dump["messages_count"] = len(msgs) }
+			}
+			dumpJSON, _ := json.MarshalIndent(dump, "", "  ")
+			os.WriteFile("/tmp/relay-outbound.json", dumpJSON, 0644)
+		}()
+
 		resp, err := d.Transport.RoundTrip(upReq)
 		if err != nil {
 			degrade(w, "upstream_error")
@@ -126,7 +173,7 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			logUpstreamError(resp.StatusCode, errBody)
 
 			// Auto-retry on expired thinking signature: strip thinking blocks and resend.
-			if resp.StatusCode == 400 && bytes.Contains(errBody, []byte("signature")) {
+			if resp.StatusCode == 400 && (bytes.Contains(errBody, []byte("signature")) || bytes.Contains(errBody, []byte("cannot be modified"))) {
 				resp.Body.Close()
 				stripped := stripThinkingBlocks(cloaked)
 				if stripped != nil {

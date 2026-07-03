@@ -101,7 +101,10 @@ func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *Bod
 		return false
 	}
 
-	btCache.LearnFromCC(bodyData, fpVersion, fpBetas, fpNodeVer)
+	if !btCache.LearnFromCC(bodyData, fpVersion, fpBetas, fpNodeVer) {
+		warmupLog("warmup: body captured (%d bytes) but identity not recognized — template NOT stored", len(bodyData))
+		return false
+	}
 	warmupLog("warmup: body template learned (%d bytes, %d tools) in %s",
 		len(bodyData), countTemplateTools(bodyData), time.Since(start).Round(time.Millisecond))
 	return true

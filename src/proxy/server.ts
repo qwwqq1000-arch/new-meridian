@@ -139,6 +139,8 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
         organizationName: orgName,
       }
       writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2))
+      // Persist oauthAccount separately so CLI re-init cannot wipe it
+      try { writeFileSync(join(dir, ".oauth_account_persist.json"), JSON.stringify(claudeJson.oauthAccount)) } catch {}
       resetCachedClaudeAuthStatus()
       await getClaudeAuthStatusAsync(
         profile.id !== "default" ? profile.id : undefined,
@@ -3158,6 +3160,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
         profileFetchedAt: Date.now(),
       }
       writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2))
+      // Persist oauthAccount separately so CLI re-init cannot wipe it
+      try { writeFileSync(join(dir, ".oauth_account_persist.json"), JSON.stringify(claudeJson.oauthAccount)) } catch {}
       // Clean up stale api-key profile if present
       const { setActiveProfile, loadProfilesFromDisk } = await import("./profiles")
       const profiles = loadProfilesFromDisk()

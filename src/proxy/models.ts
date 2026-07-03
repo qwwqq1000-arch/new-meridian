@@ -3,7 +3,7 @@
  */
 
 import { exec as execCallback, execFile as execFileCallback } from "child_process"
-import { existsSync, statSync, readFileSync } from "fs"
+import { existsSync, statSync, readFileSync, writeFileSync } from "fs"
 import { fileURLToPath } from "url"
 import { homedir } from "os"
 import { join, dirname } from "path"
@@ -266,7 +266,18 @@ export async function getClaudeAuthStatusAsync(profileId?: string, envOverrides?
       if (parsed.loggedIn) {
         try {
           const raw = readFileSync(join(configDir, ".claude.json"), "utf-8")
-          const acct = JSON.parse(raw)?.oauthAccount
+          let acct = JSON.parse(raw)?.oauthAccount
+          if (!acct) {
+            try {
+              acct = JSON.parse(readFileSync(join(configDir, ".oauth_account_persist.json"), "utf-8"))
+              if (acct?.emailAddress) {
+                const cj = JSON.parse(raw)
+                cj.oauthAccount = acct
+                writeFileSync(join(configDir, ".claude.json"), JSON.stringify(cj, null, 2))
+                console.log("[auth] restored oauthAccount from persist file:", acct.emailAddress)
+              }
+            } catch {}
+          }
           if (acct?.emailAddress && !parsed.email) parsed.email = acct.emailAddress
           if (!parsed.subscriptionType) parsed.subscriptionType = acct?.organizationRateLimitTier || acct?.organizationType || undefined
           if (acct?.organizationRateLimitTier && !parsed.rateLimitTier) parsed.rateLimitTier = acct.organizationRateLimitTier

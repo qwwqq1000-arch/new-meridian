@@ -79,16 +79,16 @@ func (c *BodyTemplateCache) Get() *BodyTemplate {
 
 // LearnFromCC extracts a body template from a genuine Claude Code request body.
 // Called on every CC-shaped request that passes through relay.
-func (c *BodyTemplateCache) LearnFromCC(rawBody []byte, fpVersion, fpBetas, fpNodeVer string) {
+func (c *BodyTemplateCache) LearnFromCC(rawBody []byte, fpVersion, fpBetas, fpNodeVer string) bool {
 	if c == nil {
-		return
+		return false
 	}
 	var body map[string]any
 	if json.Unmarshal(rawBody, &body) != nil {
-		return
+		return false
 	}
-	if !hasClaudeIdentity(body["system"]) {
-		return
+	if !hasCLIIdentity(body["system"]) {
+		return false
 	}
 
 	tmpl := &BodyTemplate{
@@ -136,6 +136,7 @@ func (c *BodyTemplateCache) LearnFromCC(rawBody []byte, fpVersion, fpBetas, fpNo
 	c.mu.Unlock()
 	logDD("body template learned: system=%d blocks, tools=%d, version=%s",
 		len(tmpl.System), len(tmpl.Tools), tmpl.Version)
+	return true
 }
 
 // MergeUserRequest takes a user's bare API request and merges it with the
@@ -193,8 +194,18 @@ func MergeUserRequest(userBody []byte, tmpl *BodyTemplate, userID string, billin
 	// ── ③ USER PASSTHROUGH ──
 	result["model"] = user["model"]
 	result["messages"] = stripEmptyTextBlocks(user["messages"])
-	if s, ok := user["stream"].(bool); ok && s {
+	stripEmptyImageBlocks(result["messages"])
+	sanitizeToolChoice(user)
+	if tc, ok := user["tool_choice"]; ok {
+		result["tool_choice"] = tc
+	}
+	if s, ok := user["stream"].(bool); ok {
+		result["stream"] = s
+	} else {
 		result["stream"] = true
+	}
+	if userOC, ok := user["output_config"].(map[string]any); ok {
+		result["output_config"] = userOC
 	}
 
 	ensureThinkingFitsMaxTokens(result)
@@ -211,15 +222,8 @@ func modelMaxTokens(model string) int {
 }
 
 // isNewModel returns true for models that use 64000 max_tokens and mid-conversation beta.
-// Old models (sonnet-4-6, opus-4-6, haiku) use 32000.
 func isNewModel(model string) bool {
 	if strings.Contains(model, "haiku") {
-		return false
-	}
-	if strings.Contains(model, "sonnet-4") {
-		return false
-	}
-	if strings.Contains(model, "opus-4-6") {
 		return false
 	}
 	return true

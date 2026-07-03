@@ -41,6 +41,7 @@ func marshalBody(body map[string]any) ([]byte, error) {
 // running within the Claude Agent SDK.").
 const ClaudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
 const ccIdentityPrefix = "You are Claude Code, Anthropic's official CLI for Claude"
+const agentSDKIdentityPrefix = "You are a Claude agent, built on Anthropic's Claude Agent SDK"
 
 // deriveUserID produces a deterministic user_id that matches the real CC
 // format: a JSON-encoded object with device_id, account_uuid and session_id.
@@ -52,11 +53,11 @@ func deriveSessionID(account string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
-func deriveUserID(account string) string {
+func deriveUserID(account, accountUUID string) string {
 	h := sha256.Sum256([]byte("meridian-uid:" + account))
 	deviceID := fmt.Sprintf("%x", h)
 	sessionID := deriveSessionID(account)
-	return `{"device_id":"` + deviceID + `","account_uuid":"","session_id":"` + sessionID + `"}`
+	return `{"device_id":"` + deviceID + `","account_uuid":"` + accountUUID + `","session_id":"` + sessionID + `"}`
 }
 
 func CloakBody(raw []byte, userID string) ([]byte, error) {
