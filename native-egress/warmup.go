@@ -71,6 +71,16 @@ func warmupLoop(claudePath, configDir string, fpCache *FPCache, btCache *BodyTem
 func warmupTemplate(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) bool {
 	start := time.Now()
 
+	tok, _, exp, _ := ReadToken(configDir)
+	if tok == "" {
+		warmupLog("warmup: no credentials yet — waiting for session-key upload")
+		return false
+	}
+	if exp > 0 && exp < time.Now().UnixMilli() {
+		warmupLog("warmup: token expired (exp=%d, now=%d) — waiting for proxy refresh", exp, time.Now().UnixMilli())
+		return false
+	}
+
 	fp, bodyData := captureAll(claudePath, configDir)
 	if fp == nil {
 		warmupLog("warmup: capture failed (CC not logged in?)")
