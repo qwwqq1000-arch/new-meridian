@@ -145,33 +145,38 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
         Object.keys(profile.env).length > 0 ? profile.env : undefined
       ).catch(() => {})
       console.log(`[startup] warmup: email populated via roles API: ${emailMatch[1]}`)
-      return
+      break
     } catch {}
   }
 
-  // Fallback: run claude -p hi (needs API quota)
-  const claudePath = await resolveClaudeExecutableAsync()
-  const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
-  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
-  const { execFile } = require("child_process") as typeof import("child_process")
-  const ok = await new Promise<boolean>((resolve) => {
-    execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
-      timeout: 30_000,
-      env,
-    }, (_err: any, stdout: string) => {
-      try {
-        const result = JSON.parse(stdout || "{}")
-        resolve(!result.is_error)
-      } catch { resolve(false) }
-    })
-  })
-  if (ok) {
-    resetCachedClaudeAuthStatus()
-    await getClaudeAuthStatusAsync(
-      profile.id !== "default" ? profile.id : undefined,
-      Object.keys(profile.env).length > 0 ? profile.env : undefined
-    ).catch(() => {})
-  }
+  // Fallback: run claude -p hi (only if roles API didn't populate email)
+  try {
+    const cjCheck = JSON.parse(readFileSync(claudeJsonPath, "utf-8"))
+    if (!cjCheck.oauthAccount?.emailAddress) {
+      const claudePath = await resolveClaudeExecutableAsync()
+      const env: NodeJS.ProcessEnv = { ...process.env, ...profile.env }
+      if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+      const { execFile } = require("child_process") as typeof import("child_process")
+      const ok = await new Promise<boolean>((resolve) => {
+        execFile(claudePath, ["-p", "hi", "--output-format", "json"], {
+          timeout: 30_000,
+          env,
+        }, (_err: any, stdout: string) => {
+          try {
+            const result = JSON.parse(stdout || "{}")
+            resolve(!result.is_error)
+          } catch { resolve(false) }
+        })
+      })
+      if (ok) {
+        resetCachedClaudeAuthStatus()
+        await getClaudeAuthStatusAsync(
+          profile.id !== "default" ? profile.id : undefined,
+          Object.keys(profile.env).length > 0 ? profile.env : undefined
+        ).catch(() => {})
+      }
+    }
+  } catch {}
 
   // Self-check: if email exists but subscription fields are missing, auto-populate.
   // CLI warmup and roles API don't return org type / rate limit tier, so these
