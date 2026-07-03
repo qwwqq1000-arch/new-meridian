@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,18 +9,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // PrevReqStore tracks the last Anthropic request-id per session so we can
 // populate cc_prev_req in the billing header (multi-turn chain signal).
 type PrevReqStore struct {
-	mu    sync.Mutex
-	bySession map[string]string // sessionID → last request-id
-	bySuffix  map[string]string // sessionID → random 3-char hex suffix (stable per session)
+	mu        sync.Mutex
+	bySession map[string]string
 }
 
 func NewPrevReqStore() *PrevReqStore {
-	return &PrevReqStore{bySession: make(map[string]string), bySuffix: make(map[string]string)}
+	return &PrevReqStore{bySession: make(map[string]string)}
 }
 
 func (s *PrevReqStore) Get(session string) string {
@@ -35,23 +34,6 @@ func (s *PrevReqStore) Set(session, reqID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bySession[session] = reqID
-}
-
-func (s *PrevReqStore) Suffix(session, firstUserMsg, version string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if v, ok := s.bySuffix[session]; ok {
-		return v
-	}
-	v := ComputeVersionSuffix(firstUserMsg, version)
-	s.bySuffix[session] = v
-	return v
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 type RelayDeps struct {
@@ -98,15 +80,8 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 			tmpl = t
 		}
 		sessionID := d.SessionID(account)
-		firstMsg := extractFirstUserMsg(rawBody)
-		tmplVersion := ""
-		if tmpl.Version != "" {
-			tmplVersion = tmpl.Version
-		}
 		bp := &BillingPatch{
-			CCH:           randHex(3)[:5], // 5-char hex
-			PrevReqID:     d.PrevReq.Get(sessionID),
-			VersionSuffix: d.PrevReq.Suffix(sessionID, firstMsg, tmplVersion),
+			PrevReqID: d.PrevReq.Get(sessionID),
 		}
 		cloaked, err = MergeUserRequest(rawBody, tmpl, deriveUserID(account), bp)
 		if err != nil {
@@ -120,12 +95,12 @@ func relayHandler(d RelayDeps) http.HandlerFunc {
 		}
 
 		// Always stream from upstream — NE assembles to JSON for non-stream clients.
-		reqModel := extractModel(rawBody)
+		clientRequestID := uuid.NewString()
 		var headers http.Header
 		if useApiKey {
-			headers = BuildHeadersApiKey(fp, apiKey, sessionID, true, reqModel, clientBeta)
+			headers = BuildHeadersApiKey(fp, apiKey, sessionID, clientRequestID, true, clientBeta)
 		} else {
-			headers = BuildHeaders(fp, token, sessionID, true, reqModel, clientBeta)
+			headers = BuildHeaders(fp, token, sessionID, clientRequestID, true, clientBeta)
 		}
 
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", "https://api.anthropic.com/v1/messages?beta=true", bytesReader(cloaked))
@@ -312,39 +287,6 @@ func bytesReader(b []byte) io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(b))
 }
 
-func extractFirstUserMsg(body []byte) string {
-	var req struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content json.RawMessage `json:"content"`
-		} `json:"messages"`
-	}
-	if json.Unmarshal(body, &req) != nil {
-		return ""
-	}
-	for _, m := range req.Messages {
-		if m.Role != "user" {
-			continue
-		}
-		var s string
-		if json.Unmarshal(m.Content, &s) == nil {
-			return s
-		}
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(m.Content, &blocks) == nil {
-			for _, b := range blocks {
-				if b.Type == "text" {
-					return b.Text
-				}
-			}
-		}
-		return ""
-	}
-	return ""
-}
 
 func extractModel(body []byte) string {
 	var m struct{ Model string `json:"model"` }

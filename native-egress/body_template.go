@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -10,29 +8,12 @@ import (
 )
 
 type BillingPatch struct {
-	CCH           string // 5-char hex, random per request
-	PrevReqID     string // req_xxx from last response (empty on first turn)
-	VersionSuffix string // 3-char hex, SHA256-derived from first user message
+	PrevReqID string // req_xxx from last response (empty on first turn)
 }
 
-const versionSuffixSalt = "59cf53e54c78"
-
-func ComputeVersionSuffix(firstUserMsg, version string) string {
-	charAt := func(s string, i int) byte {
-		if i < len(s) {
-			return s[i]
-		}
-		return '0'
-	}
-	chars := string([]byte{charAt(firstUserMsg, 4), charAt(firstUserMsg, 7), charAt(firstUserMsg, 20)})
-	h := sha256.Sum256([]byte(versionSuffixSalt + chars + version))
-	return hex.EncodeToString(h[:])[:3]
-}
-
-// patchBillingHeader rewrites the x-anthropic-billing-header system block to
-// add cch, cc_prev_req, and the version sub-build suffix that real CLI sends.
+// patchBillingHeader appends cc_prev_req to the billing header (multi-turn chain).
 func patchBillingHeader(system []any, bp *BillingPatch) {
-	if bp == nil {
+	if bp == nil || bp.PrevReqID == "" {
 		return
 	}
 	for _, block := range system {
@@ -44,44 +25,12 @@ func patchBillingHeader(system []any, bp *BillingPatch) {
 		if !strings.Contains(text, "x-anthropic-billing-header:") {
 			continue
 		}
-
-		// Inject version suffix: cc_version=2.1.198; → cc_version=2.1.198.a3f;
-		if bp.VersionSuffix != "" {
-			text = injectVersionSuffix(text, bp.VersionSuffix)
-		}
-		// Append cch
-		if bp.CCH != "" && !strings.Contains(text, "cch=") {
-			text = strings.TrimRight(text, " ;") + "; cch=" + bp.CCH + ";"
-		}
-		// Append cc_prev_req
-		if bp.PrevReqID != "" && !strings.Contains(text, "cc_prev_req=") {
+		if !strings.Contains(text, "cc_prev_req=") {
 			text = strings.TrimRight(text, " ;") + "; cc_prev_req=" + bp.PrevReqID + ";"
+			m["text"] = text
 		}
-
-		m["text"] = text
 		return
 	}
-}
-
-// injectVersionSuffix turns "cc_version=2.1.198;" into "cc_version=2.1.198.a3f;"
-func injectVersionSuffix(text, suffix string) string {
-	const prefix = "cc_version="
-	idx := strings.Index(text, prefix)
-	if idx < 0 {
-		return text
-	}
-	start := idx + len(prefix)
-	end := strings.IndexByte(text[start:], ';')
-	if end < 0 {
-		return text
-	}
-	end += start
-	ver := text[start:end]
-	// Only add suffix if not already present (no dot after base version)
-	if strings.Count(ver, ".") < 3 {
-		return text[:end] + "." + suffix + text[end:]
-	}
-	return text
 }
 
 // BodyTemplate holds the complete request body structure captured from a genuine

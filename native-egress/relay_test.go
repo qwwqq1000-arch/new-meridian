@@ -285,26 +285,6 @@ func TestRelayApiKeyAuth(t *testing.T) {
 	}
 }
 
-func TestComputeVersionSuffix(t *testing.T) {
-	tests := []struct {
-		msg, version, want string
-	}{
-		{"say x", "2.1.198", "e7d"},   // verified against real CLI
-		{"hi", "2.1.198", "542"},       // verified against real CLI
-		{"", "2.1.198", ""},            // short msg
-		{"abcdefghijklmnopqrstu", "2.1.198", ""}, // full 21-char msg
-	}
-	for _, tt := range tests {
-		got := ComputeVersionSuffix(tt.msg, tt.version)
-		if tt.want != "" && got != tt.want {
-			t.Errorf("ComputeVersionSuffix(%q, %q) = %q, want %q", tt.msg, tt.version, got, tt.want)
-		}
-		if len(got) != 3 {
-			t.Errorf("ComputeVersionSuffix(%q, %q) length = %d, want 3", tt.msg, tt.version, len(got))
-		}
-	}
-}
-
 func TestExtractVersionFromBilling(t *testing.T) {
 	tests := []struct {
 		input, want string
