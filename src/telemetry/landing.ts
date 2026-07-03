@@ -104,7 +104,7 @@ function qReset(r){if(r==null||!isFinite(r))return'';var ms=r-Date.now();if(ms<=
 function renderNeedKey(){
   document.getElementById('content').innerHTML='<div style="padding:48px 24px;text-align:center"><div style="font-size:16px;color:var(--text);margin-bottom:10px">🔑 需要 API Key</div><div style="font-size:13px;color:var(--muted);line-height:1.7">在网址后加 <code style="color:var(--accent)">?key=&lt;你的 API_KEY&gt;</code> 再访问。<br>例如 <code style="color:var(--accent)">http://'+location.host+'/?key=sk-mrd-...</code></div></div>';
 }
-var lastHealth=null,lastStats=null,lastQuota=null;
+var lastHealth=null,lastStats=null,lastQuota=null,lastSelfCheck=null;
 // Initial render only — NO auto-refresh (no setInterval). quota is never fetched
 // here; it (and a fresh health/stats) load ONLY when the user clicks 刷新.
 async function refresh(){
@@ -119,6 +119,10 @@ async function refresh(){
 }
 // Manual full refresh (health + stats + quota). Quota hits Anthropic's usage
 // endpoint, so it is fetched ONLY on this explicit click — never automatically.
+async function runSC(){
+  try{lastSelfCheck=await fetch('/self-check').then(function(r){return r.ok?r.json():null}).catch(function(){return null});}catch(e){}
+  render(lastHealth||{},lastStats||{},lastQuota,lastSelfCheck);
+}
 async function fetchQuota(){
   var btn=document.getElementById('quota-btn');if(btn){btn.textContent='刷新中…';btn.disabled=true;}
   try{
@@ -127,10 +131,11 @@ async function fetchQuota(){
     if(sr.ok)lastStats=await sr.json();
     lastQuota=await fetch('/v1/usage/quota/all').then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});
   }catch(e){}
-  render(lastHealth||{},lastStats||{},lastQuota);
+  try{lastSelfCheck=await fetch('/self-check').then(function(r){return r.ok?r.json():null}).catch(function(){return null})}catch(e){}
+render(lastHealth||{},lastStats||{},lastQuota,lastSelfCheck);
 }
 
-function render(h,s,q){
+function render(h,s,q,sc){
   h=h||{};s=s||{};
   const st=h.status||'unknown',dot=st==='healthy'?'healthy':st==='degraded'?'degraded':'unhealthy';
   let o='';
@@ -154,6 +159,17 @@ function render(h,s,q){
   o+='</div>';
   var qp=(q&&q.profiles&&q.profiles.length)?q.profiles[0]:null;
   var qwin=qp&&qp.windows?qp.windows:[];
+  o+='<div class="section"><div class="section-title">Self-Check <button onclick="runSC()" style="margin-left:8px;font-size:11px;padding:3px 12px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;vertical-align:middle">\u{1f50d} \u81ea\u68c0</button></div>';
+  if(sc&&sc.checks){
+    sc.checks.forEach(function(c){
+      var col=c.status==='PASS'?'var(--green)':c.status==='FAIL'?'var(--red)':'var(--yellow)';
+      var icon=c.status==='PASS'?'\u2713':c.status==='FAIL'?'\u2717':'!';
+      o+='<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px"><span style="color:'+col+';font-weight:700;width:16px">'+icon+'</span><span style="color:var(--muted);width:120px">'+c.name+'</span><span>'+c.detail+'</span></div>';
+    });
+    var scol=sc.failed>0?'var(--red)':sc.warned>0?'var(--yellow)':'var(--green)';
+    o+='<div style="margin-top:8px;font-size:12px;color:'+scol+'">'+sc.summary+(sc.failed===0&&sc.warned===0?' \u2713 ALL CLEAR':'')+'</div>';
+  }else{o+='<div style="color:var(--muted);font-size:12px">\u70b9\u51fb\u300c\u81ea\u68c0\u300d\u6309\u94ae\u8fd0\u884c</div>';}
+  o+='</div>';
   o+='<div class="section"><div class="section-title">Rate Limits 限额 <button id="quota-btn" onclick="fetchQuota()" style="margin-left:8px;font-size:11px;padding:3px 12px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;vertical-align:middle">🔄 刷新额度</button></div>';
   if(qwin.length){
     qwin.forEach(function(w){

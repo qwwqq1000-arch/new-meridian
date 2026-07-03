@@ -2901,6 +2901,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               try { writeFileSync(join(configDir, ".oauth_account_persist.json"), JSON.stringify(acct)) } catch {}
               subscription = acct.organizationType
               console.log(`[self-check] auto-fixed subscription: ${acct.organizationType} / ${acct.organizationRateLimitTier}`)
+              resetCachedClaudeAuthStatus()
             }
           }
         }
