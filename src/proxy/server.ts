@@ -2973,6 +2973,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
       diagnosticLog.log({ level: c.status === "FAIL" ? "error" : c.status === "WARN" ? "warn" : "info", category: "lifecycle", message: `  ${c.name}: ${c.detail}` })
     }
 
+    resetCachedClaudeAuthStatus()
     lastSelfCheckResult = { trigger, timestamp: Date.now(), checks, summary, passed, warned, failed }
     return lastSelfCheckResult
   }
