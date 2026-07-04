@@ -27,9 +27,18 @@ func TriggerWarmup() {
 	}
 }
 
-// warmupLoop runs warmupTemplate on startup, then retries every 30s if it
-// failed (e.g. account not yet pushed). Once successful, re-runs every 10min
-// to keep the template fresh (in case CLI is upgraded).
+// warmupLoop captures the CLI fingerprint + body template EXACTLY ONCE on
+// first onboarding, then stops. It retries every 30s only until that first
+// success (e.g. the account may not be pushed yet). After success it does NOT
+// re-capture on any timer — it only blocks for an explicit manual trigger
+// (POST /warmup).
+//
+// Rationale: each warmupTemplate() run spawns the real `claude` CLI, whose
+// startup re-touches the OAuth token (refresh-on-expired can WIPE credentials
+// on failure — see the token pre-check in warmupTemplate). Re-running it every
+// 10 minutes gained nothing (the CLI binary can't upgrade at runtime within a
+// container) while repeatedly poking a fresh account's credentials. One capture
+// per container lifetime is all we want.
 func warmupLoop(claudePath, configDir string, fpCache *FPCache, btCache *BodyTemplateCache) {
 	attempt := 0
 	for {
@@ -47,19 +56,15 @@ func warmupLoop(claudePath, configDir string, fpCache *FPCache, btCache *BodyTem
 		}
 	}
 
-	// Periodic refresh: re-capture every 10 minutes to pick up CLI upgrades
-	for {
-		select {
-		case <-warmupKick:
-			warmupLog("warmup: kick received, refreshing")
-		case <-time.After(10 * time.Minute):
-		}
+	// Captured. No automatic periodic refresh — only re-capture on an explicit
+	// manual trigger (POST /warmup). This blocks until a kick arrives; there is
+	// no timer, so a settled account is never poked again on its own.
+	for range warmupKick {
 		attempt++
-		ok := warmupTemplate(claudePath, configDir, fpCache, btCache)
-		if ok {
-			warmupLog("warmup: refresh SUCCESS (attempt #%d)", attempt)
+		if warmupTemplate(claudePath, configDir, fpCache, btCache) {
+			warmupLog("warmup: manual re-capture SUCCESS (attempt #%d)", attempt)
 		} else {
-			warmupLog("warmup: refresh FAILED (attempt #%d) — keeping previous template", attempt)
+			warmupLog("warmup: manual re-capture FAILED (attempt #%d) — keeping previous template", attempt)
 		}
 	}
 }

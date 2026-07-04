@@ -188,13 +188,37 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
   try {
     let cj = JSON.parse(readFileSync(claudeJsonPath, "utf-8"))
     const acct = cj.oauthAccount
-    if (acct?.emailAddress && (!acct.organizationType || !acct.organizationRateLimitTier)) {
-      // Try to determine org type from claude.ai org capabilities
+    if (acct?.emailAddress && (!acct.organizationType || !acct.organizationRateLimitTier || !acct.subscriptionCreatedAt || !acct.accountCreatedAt || !acct.accountUuid)) {
       const creds = JSON.parse(readFileSync(credsPath, "utf-8"))
       const token = creds?.claudeAiOauth?.accessToken
       let orgType = ""
       let rateLimitTier = ""
+      // Full account profile: account.created_at/uuid + org.subscription_created_at/rate_limit_tier.
+      // These only come from the OAuth profile endpoint (bridge.py supplies them during
+      // sessionKey onboarding; token-push / CLI onboarding does not), so fetch them here so
+      // /health surfaces full account info (dates + uuid) after any kind of account import.
       if (token) {
+        try {
+          const profResp = await fetch("https://api.anthropic.com/api/oauth/profile", {
+            headers: { "Authorization": `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (profResp.ok) {
+            const prof = await profResp.json() as any
+            const pa = prof?.account || {}
+            const po = prof?.organization || {}
+            if (!acct.accountUuid && pa.uuid) acct.accountUuid = pa.uuid
+            if (!acct.accountCreatedAt && pa.created_at) acct.accountCreatedAt = pa.created_at
+            if (!acct.subscriptionCreatedAt && po.subscription_created_at) acct.subscriptionCreatedAt = po.subscription_created_at
+            if (po.organization_type) orgType = po.organization_type
+            if (po.rate_limit_tier) rateLimitTier = po.rate_limit_tier
+            if (po.billing_type && !acct.billingType) acct.billingType = po.billing_type
+          }
+        } catch {}
+      }
+      // Fallback: derive org type/tier from claude.ai org capabilities if the profile
+      // endpoint didn't yield them.
+      if (token && (!orgType || !rateLimitTier)) {
         try {
           const orgResp = await fetch("https://claude.ai/api/organizations", {
             headers: { "Authorization": `Bearer ${token}`, "Cookie": "" },
@@ -205,8 +229,8 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
             const org = orgs?.find((o: any) => o.uuid === acct.organizationUuid) || orgs?.[0]
             if (org) {
               const caps: string[] = org.capabilities || []
-              orgType = caps.includes("claude_max") ? "claude_max" : caps.includes("claude_pro") ? "claude_pro" : "free"
-              rateLimitTier = org.rate_limit_tier || ""
+              if (!orgType) orgType = caps.includes("claude_max") ? "claude_max" : caps.includes("claude_pro") ? "claude_pro" : "free"
+              if (!rateLimitTier) rateLimitTier = org.rate_limit_tier || ""
             }
           }
         } catch {}
@@ -218,7 +242,7 @@ async function warmupAccountInfo(profile: ResolvedProfile, configDir?: string, r
       cj.oauthAccount = acct
       writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
       resetCachedClaudeAuthStatus()
-      console.log(`[startup] self-check: populated subscription fields for ${acct.emailAddress} → ${acct.organizationRateLimitTier}`)
+      console.log(`[startup] self-check: populated account info for ${acct.emailAddress} → ${acct.organizationRateLimitTier}, sub=${acct.subscriptionCreatedAt || "?"}`)
     }
   } catch {}
 }
